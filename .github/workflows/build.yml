@@ -2,6 +2,8 @@ name: Build Serein prototype
 on:
   push:
     branches: [arena/73cb41a7-djdd]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
