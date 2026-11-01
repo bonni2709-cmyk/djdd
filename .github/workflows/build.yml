@@ -37,7 +37,16 @@ jobs:
           java-version: '17'
       - uses: gradle/actions/setup-gradle@v4
       - name: Package
-        run: ./gradlew ${{ matrix.task }} --stacktrace
+        shell: bash
+        run: |
+          ./gradlew ${{ matrix.task }} --stacktrace > build.log 2>&1
+          result=$?
+          if [ "$result" -ne 0 ]; then
+            grep -E -A 12 'FAILURE:|What went wrong:|^e:|^> |SDK location|License|Could not|error:' build.log | tail -n 60 | while IFS= read -r line; do
+              echo "::error::${line}"
+            done
+          fi
+          exit "$result"
       - uses: actions/upload-artifact@v4
         with:
           name: serein-${{ matrix.platform }}
