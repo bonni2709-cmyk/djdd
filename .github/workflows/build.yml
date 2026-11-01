@@ -1,0 +1,46 @@
+name: Build Serein prototype
+on:
+  push:
+    branches: [arena/73cb41a7-djdd]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: android
+            os: ubuntu-latest
+            task: :composeApp:assembleDebug
+            files: composeApp/build/outputs/apk/debug/*.apk
+          - platform: linux
+            os: ubuntu-latest
+            task: :composeApp:packageDistributionForCurrentOS
+            files: composeApp/build/compose/binaries/main/deb/*.deb
+          - platform: windows
+            os: windows-latest
+            task: :composeApp:packageDistributionForCurrentOS
+            files: composeApp/build/compose/binaries/main/exe/*.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - if: matrix.platform == 'android'
+        uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Package
+        run: ./gradlew ${{ matrix.task }} --stacktrace
+      - uses: actions/upload-artifact@v4
+        with:
+          name: serein-${{ matrix.platform }}
+          path: ${{ matrix.files }}
+          if-no-files-found: error
+          retention-days: 14
