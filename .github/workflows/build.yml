@@ -43,7 +43,7 @@ jobs:
           ./gradlew ${{ matrix.task }} --stacktrace > build.log 2>&1
           result=$?
           if [ "$result" -ne 0 ]; then
-            grep -E -A 4 "What went wrong:|Execution failed for task|^> |^e:|^Caused by:|files found with path|Duplicate" build.log | head -n 9 | while IFS= read -r line; do
+            awk '/^FAILURE: Build failed/{flag=1} flag && n++<9 {print}' build.log | while IFS= read -r line; do
               echo "::error::${line}"
             done
           fi
