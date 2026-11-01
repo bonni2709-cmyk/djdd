@@ -39,10 +39,11 @@ jobs:
       - name: Package
         shell: bash
         run: |
+          set +e
           ./gradlew ${{ matrix.task }} --stacktrace > build.log 2>&1
           result=$?
           if [ "$result" -ne 0 ]; then
-            grep -E -A 12 'FAILURE:|What went wrong:|^e:|^> |SDK location|License|Could not|error:' build.log | tail -n 60 | while IFS= read -r line; do
+            tail -n 35 build.log | while IFS= read -r line; do
               echo "::error::${line}"
             done
           fi
