@@ -2,6 +2,7 @@ package app.serein
 
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -12,6 +13,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
@@ -300,13 +303,27 @@ private fun ContactsScreen(data: VaultData, update: (VaultData) -> Unit) {
     var editing by remember { mutableStateOf<String?>(null) }
     var nickname by remember { mutableStateOf("") }
     var key by remember { mutableStateOf("") }
+    var qrScanResult by remember { mutableStateOf<String?>(null) }
     var host by remember { mutableStateOf("") }
     var contactError by remember { mutableStateOf<String?>(null) }
     Heading("Contacts", "People you choose to remember")
     Spacer(Modifier.height(24.dp))
     Notice("Your LAN address · port $LAN_PORT", localLanAddress())
     Spacer(Modifier.height(16.dp))
-    Button(onClick = { nickname = ""; key = ""; host = ""; editing = null; adding = true }) { Text("Add contact") }
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Button(onClick = { nickname = ""; key = ""; host = ""; editing = null; adding = true }) { Text("Add contact") }
+        if (!isDesktopPlatform()) OutlinedButton(onClick = {
+            scanContactQr { result ->
+                if (result != null) {
+                    val parsed = parseContactQr(result)
+                    if (parsed != null) {
+                        key = parsed; nickname = ""; host = ""; editing = null; adding = true
+                    } else qrScanResult = "Invalid Serein QR code"
+                }
+            }
+        }) { Text("Scan QR") }
+    }
+    if (qrScanResult != null) Text(qrScanResult!!, color = MaterialTheme.colorScheme.error)
     Spacer(Modifier.height(20.dp))
     Notice("Verify in person", "Both peers must add each other’s public keys and private LAN IP addresses. Compare keys over an independent trusted channel.")
     Spacer(Modifier.height(18.dp))
@@ -376,6 +393,8 @@ private fun IdentityScreen(data: VaultData, identity: Identity, update: (VaultDa
             androidx.compose.foundation.text.selection.SelectionContainer {
                 Text(identity.publicKey, fontSize = 15.sp, lineHeight = 23.sp)
             }
+            Spacer(Modifier.height(20.dp))
+            ContactQr(identity.publicKey)
         }
     }
     Spacer(Modifier.height(20.dp))
@@ -394,3 +413,16 @@ private fun IdentityScreen(data: VaultData, identity: Identity, update: (VaultDa
 }
 
 expect fun isDesktopPlatform(): Boolean
+
+@Composable
+private fun ContactQr(publicKey: String) {
+    val grid = remember(publicKey) { encodeContactQr(publicKey) }
+    Canvas(Modifier.size(194.dp).background(Color.White)) {
+        val unit = size.minDimension / grid.size
+        for (y in 0 until grid.size) for (x in 0 until grid.size) {
+            if (grid.dark(x, y)) drawRect(textColor, Offset(x * unit, y * unit), Size(unit, unit))
+        }
+    }
+    Spacer(Modifier.height(8.dp))
+    Text("Scan to add this public key. Verify it in person.", color = secondary, fontSize = 12.sp)
+}

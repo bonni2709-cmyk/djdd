@@ -9,6 +9,17 @@ import kotlin.test.assertTrue
 
 class RepositoryTest {
     @Test
+    fun qrContainsOnlyPublicKey() {
+        val identity = generateIdentity()
+        try {
+            val grid = encodeContactQr(identity.publicKey)
+            assertTrue(grid.size >= 21)
+            assertEquals(identity.publicKey, parseContactQr(CONTACT_SCHEME + identity.publicKey))
+            assertEquals(null, parseContactQr(CONTACT_SCHEME + "garbage"))
+        } finally { identity.clear() }
+    }
+
+    @Test
     fun identitySurvivesRestartAndWrongPasswordCannotDecrypt() {
         val previousHome = System.getProperty("user.home")
         val tempHome = Files.createTempDirectory("serein-test-")
@@ -34,3 +45,5 @@ class RepositoryTest {
         } finally { System.setProperty("user.home", previousHome) }
     }
 }
+
+// QR parsing is shared across Android and desktop; never accept a QR containing a private key.

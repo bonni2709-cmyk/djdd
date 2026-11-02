@@ -30,6 +30,8 @@ kotlin {
         androidMain.dependencies {
             implementation("androidx.activity:activity-compose:1.10.1")
             implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
+            implementation("com.google.zxing:core:3.5.3")
+            implementation("com.journeyapps:zxing-android-embedded:4.3.0")
         }
         val desktopTest by getting {
             dependencies { implementation(kotlin("test")) }
@@ -38,6 +40,7 @@ kotlin {
             dependencies {
                 implementation(compose.desktop.currentOs)
                 implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
+                implementation("com.google.zxing:core:3.5.3")
             }
         }
     }
@@ -69,7 +72,7 @@ compose.desktop {
     application {
         mainClass = "app.serein.MainKt"
         nativeDistributions {
-            targetFormats(TargetFormat.Exe, TargetFormat.Deb)
+            targetFormats(TargetFormat.Exe, TargetFormat.Deb, TargetFormat.Dmg)
             packageName = "serein"
             packageVersion = "0.3.0"
             description = "Serein local-first prototype"

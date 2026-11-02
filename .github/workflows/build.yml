@@ -24,6 +24,10 @@ jobs:
             os: ubuntu-24.04
             task: :composeApp:packageDistributionForCurrentOS
             files: composeApp/build/compose/binaries/main/deb/*.deb
+          - platform: macos
+            os: macos-15
+            task: :composeApp:packageDistributionForCurrentOS
+            files: composeApp/build/compose/binaries/main/dmg/*.dmg
           - platform: windows
             os: windows-latest
             task: :composeApp:packageDistributionForCurrentOS
