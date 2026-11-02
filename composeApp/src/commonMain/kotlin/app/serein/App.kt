@@ -75,7 +75,7 @@ fun SereinApp() {
                             if (saved) scope.launch { current = repo.data }
                             else scope.launch { lanError = "Could not save received message." }
                             saved
-                        }
+                        })
                 }
                 DisposableEffect(transport) {
                     lanError = transport.start()
@@ -264,7 +264,7 @@ private fun ContactRow(contact: Contact, detail: String, open: () -> Unit) {
 }
 
 @Composable
-private fun ChatScreen(contact: Contact, messages: List<ChatMessage>, send: (String) -> Unit, back: () -> Unit) {
+private fun ColumnScope.ChatScreen(contact: Contact, messages: List<ChatMessage>, send: (String) -> Unit, back: () -> Unit) {
     var draft by remember(contact.publicKey) { mutableStateOf("") }
     LaunchedEffect(messages.lastOrNull()) {
         if (messages.lastOrNull()?.outgoing == true && messages.lastOrNull()?.text == draft) draft = ""
