@@ -34,6 +34,8 @@ actual fun withRepositoryLock(repository: LocalRepository, block: () -> Unit) { 
 
 actual fun localLanAddress(): String = try {
     java.net.NetworkInterface.getNetworkInterfaces().toList()
+        .filter { it.isUp }
+        .sortedBy { if (it.name.startsWith("wlan") || it.name.startsWith("en") || it.name.startsWith("eth")) 0 else 1 }
         .flatMap { it.inetAddresses.toList() }
         .filterIsInstance<java.net.Inet4Address>()
         .firstOrNull { it.isSiteLocalAddress && !it.isLoopbackAddress }

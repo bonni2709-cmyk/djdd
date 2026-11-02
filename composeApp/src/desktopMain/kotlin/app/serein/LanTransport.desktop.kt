@@ -4,6 +4,8 @@ import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.net.InetAddress
 import java.net.ServerSocket
+import java.net.InetSocketAddress
+import java.util.concurrent.Semaphore
 import java.net.Socket
 import java.security.SecureRandom
 import java.security.MessageDigest
@@ -31,18 +33,22 @@ actual class LanTransport actual constructor(
     private val onMessage: (String, String) -> Boolean
 ) {
     private var server: ServerSocket? = null
+    private val inboundSlots = Semaphore(8)
     private val magic = "serein-lan-v1".toByteArray(Charsets.US_ASCII)
 
     actual fun start(): String? = try {
-        server = ServerSocket(LAN_PORT).apply { reuseAddress = true }
+        server = ServerSocket().apply { reuseAddress = true; bind(InetSocketAddress(LAN_PORT)) }
         val listening = server!!
         Thread({
             while (!listening.isClosed) {
                 try {
                     val socket = listening.accept()
-                    Thread({ try { receive(socket) } catch (_: Exception) { socket.close() } }, "serein-peer").apply {
-                        isDaemon = true; start()
-                    }
+                    if (!inboundSlots.tryAcquire()) { socket.close(); continue }
+                    Thread({
+                        try { receive(socket) }
+                        catch (_: Exception) { socket.close() }
+                        finally { inboundSlots.release() }
+                    }, "serein-peer").apply { isDaemon = true; start() }
                 } catch (_: Exception) { if (listening.isClosed) break }
             }
         }, "serein-listener").apply { isDaemon = true; start() }

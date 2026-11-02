@@ -64,13 +64,17 @@ fun SereinApp() {
                 val identity = remember(data.seed) { identityFromSeed(seed) }
                 DisposableEffect(identity) { onDispose { seed.fill(0); identity.clear() } }
                 val transport = remember(repo, identity) {
-                    LanTransport(identity, { repo.data.contacts.map { it.publicKey }.toSet() },
+                    LanTransport(identity, {
+                        var keys = emptySet<String>()
+                        withRepositoryLock(repo) { keys = repo.data.contacts.map { it.publicKey }.toSet() }
+                        keys
+                    },
                         { key, message ->
                             var saved = false
                             withRepositoryLock(repo) {
                                 try {
-                                    val updated = repo.data.copy(messages = repo.data.messages +
-                                        ChatMessage(key, message, false, nowMillis()))
+                                    val updated = repo.data.copy(messages = (repo.data.messages +
+                                        ChatMessage(key, message, false, nowMillis())).takeLast(1000))
                                     repo.save(updated)
                                     saved = true
                                 } catch (_: Exception) { saved = false }
@@ -89,8 +93,8 @@ fun SereinApp() {
                         if (failure != null) lanError = failure
                         else try {
                             withRepositoryLock(repo) {
-                                repo.save(repo.data.copy(messages = repo.data.messages +
-                                    ChatMessage(contact.publicKey, message, true, nowMillis())))
+                                repo.save(repo.data.copy(messages = (repo.data.messages +
+                                    ChatMessage(contact.publicKey, message, true, nowMillis())).takeLast(1000)))
                             }
                             current = repo.data; lanError = null
                         } catch (_: Exception) { lanError = "Peer acknowledged, but local save failed." }
@@ -378,6 +382,7 @@ private fun ContactsScreen(data: VaultData, update: (VaultData) -> Unit) {
 @Composable
 private fun IdentityScreen(data: VaultData, identity: Identity, update: (VaultData) -> Unit) {
     var confirm by remember { mutableStateOf(false) }
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
     Heading("Your identity", "A persistent key, created on this device")
     Spacer(Modifier.height(26.dp))
     Surface(shape = RoundedCornerShape(20.dp), color = Color.White, modifier = Modifier.fillMaxWidth()) {
@@ -410,6 +415,7 @@ private fun IdentityScreen(data: VaultData, identity: Identity, update: (VaultDa
             finally { replacement.clear(); confirm = false }
         }) { Text("Reset") } },
         dismissButton = { TextButton(onClick = { confirm = false }) { Text("Cancel") } })
+    }
 }
 
 expect fun isDesktopPlatform(): Boolean

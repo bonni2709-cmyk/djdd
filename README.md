@@ -27,3 +27,5 @@ The local vault uses Android Keystore AES-GCM (hardware-backed only if supported
 ## QR contact enrollment and macOS
 
 Identity screen displays a QR code containing **only** the public key. Android's Contacts screen can scan it with its camera; the other peer must still be verified in person and their current LAN IP entered manually. Desktop users can paste the public key; webcam capture is not implemented. Compose Desktop's macOS DMG is built on the macOS GitHub Actions runner; this is a JVM desktop build, **not an iOS app**.
+
+LAN reception limits concurrent inbound sockets to eight, reads at most 16 KiB of message plaintext per connection, and keeps at most 1,000 messages in the encrypted local vault. This is a bounded prototype, not a production denial-of-service defense.
