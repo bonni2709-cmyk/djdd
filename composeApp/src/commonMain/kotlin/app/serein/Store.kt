@@ -36,6 +36,11 @@ class LocalRepository(private val vault: SecureVault) {
         }
         private set
 
+    init {
+        val unexpired = data.messages.filter { it.expiresAtMillis == null || it.expiresAtMillis > nowMillis() }
+        if (unexpired.size != data.messages.size) save(data.copy(messages = unexpired))
+    }
+
     fun save(updated: VaultData) {
         check(updated.version == 1) { "Unsupported vault version" }
         vault.write(json.encodeToString(updated).encodeToByteArray())
@@ -50,7 +55,11 @@ expect fun decodeBase64Url(value: String): ByteArray
 expect fun identityFromSeed(seed: ByteArray): Identity
 
 @Serializable
-data class ChatMessage(val contactKey: String, val text: String, val outgoing: Boolean, val timeMillis: Long)
+data class ChatMessage(val contactKey: String, val text: String, val outgoing: Boolean,
+                       val timeMillis: Long, val expiresAtMillis: Long? = null)
+
+@Serializable
+data class LanPayload(val version: Int = 1, val text: String, val expiresAtMillis: Long? = null)
 
 expect fun nowMillis(): Long
 

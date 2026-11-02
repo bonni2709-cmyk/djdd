@@ -10,6 +10,8 @@ import java.security.MessageDigest
 import java.util.concurrent.Semaphore
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.encodeToString
 
 /**
  * Experimental direct-LAN handshake: signed ephemeral X25519, HKDF-SHA256, XChaCha20-Poly1305.
@@ -19,12 +21,12 @@ import javax.crypto.spec.SecretKeySpec
 actual class LanTransport actual constructor(
     private val identity: Identity,
     private val knownKeys: () -> Set<String>,
-    private val onMessage: (String, String) -> Boolean
+    private val onMessage: (String, String, Long?) -> Boolean
 ) {
     private var server: ServerSocket? = null
     private val inboundSlots = Semaphore(8)
     private val outboundSlots = Semaphore(4)
-    private val magic = "serein-lan-v2".toByteArray(Charsets.US_ASCII)
+    private val magic = "serein-lan-v3".toByteArray(Charsets.US_ASCII)
 
     actual fun start(): String? = try {
         server = ServerSocket().apply { reuseAddress = true; bind(InetSocketAddress(LAN_PORT)) }
@@ -47,15 +49,16 @@ actual class LanTransport actual constructor(
 
     actual fun stop() { server?.close(); server = null }
 
-    actual fun send(contact: Contact, text: String, onResult: (String?) -> Unit) {
+    actual fun send(contact: Contact, text: String, expiresAtMillis: Long?, onResult: (String?) -> Unit) {
         if (!outboundSlots.tryAcquire()) { onResult("Too many active connections."); return }
         Thread({
             val error = try {
                 require(contact.host.matches(Regex("[0-9.]+"))) { "Enter a numeric private IPv4 address." }
                 val address = InetAddress.getByName(contact.host)
                 require(address is java.net.Inet4Address && address.isSiteLocalAddress) { "Peer must be on a private IPv4 LAN." }
-                val plaintext = text.encodeToByteArray()
-                require(plaintext.isNotEmpty() && plaintext.size <= 16_384) { "Message must be 1–16384 bytes." }
+                require(text.isNotBlank() && text.encodeToByteArray().size <= 16_384) { "Message must be 1–16384 bytes." }
+                require(expiresAtMillis == null || expiresAtMillis in (System.currentTimeMillis() + 1000)..(System.currentTimeMillis() + 7L * 86_400_000)) { "Invalid expiry time." }
+                val plaintext = Json.encodeToString(LanPayload(text = text, expiresAtMillis = expiresAtMillis)).encodeToByteArray()
                 Socket().use { socket ->
                     socket.connect(InetSocketAddress(address, LAN_PORT), 5000)
                     socket.soTimeout = 8000
@@ -99,12 +102,17 @@ actual class LanTransport actual constructor(
                 val key = sessionKey(secret, remoteHello, remoteHello, localHello)
                 try {
                     val size = input.readInt()
-                    require(size in 41..16_424) { "Invalid frame size" }
+                    require(size in 41..20_000) { "Invalid frame size" }
                     val frame = ByteArray(size).also { bytes -> input.readFully(bytes) }
-                    val message = SodiumBridge.open(key, frame.copyOfRange(0, 24),
-                        remoteHello + localHello, frame.copyOfRange(24, size)).decodeToString()
-                    require(message.isNotBlank()) { "Empty message" }
-                    require(onMessage(peerKey, message)) { "Message could not be saved" }
+                    val envelope = Json.decodeFromString<LanPayload>(SodiumBridge.open(key,
+                        frame.copyOfRange(0, 24), remoteHello + localHello,
+                        frame.copyOfRange(24, size)).decodeToString())
+                    require(envelope.version == 1 && envelope.text.isNotBlank() &&
+                        envelope.text.encodeToByteArray().size <= 16_384) { "Invalid message" }
+                    val now = System.currentTimeMillis()
+                    require(envelope.expiresAtMillis == null ||
+                        envelope.expiresAtMillis in now..(now + 7L * 86_400_000)) { "Expired or invalid message" }
+                    require(onMessage(peerKey, envelope.text, envelope.expiresAtMillis)) { "Message could not be saved" }
                     output.writeByte(1); output.flush()
                 } finally { key.fill(0) }
             } finally { secret.fill(0) }
@@ -130,7 +138,7 @@ actual class LanTransport actual constructor(
         try {
             val salt = MessageDigest.getInstance("SHA-256").digest(magic + clientHello + serverHello)
             val prk = hmac(salt, shared)
-            try { return hmac(prk, "serein-lan-v2 xchacha20poly1305".toByteArray() + byteArrayOf(1)) }
+            try { return hmac(prk, "serein-lan-v3 xchacha20poly1305".toByteArray() + byteArrayOf(1)) }
             finally { prk.fill(0) }
         } finally { shared.fill(0) }
     }

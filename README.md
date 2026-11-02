@@ -1,31 +1,24 @@
-# Serein
+# Serein / Серейн
 
-Serein is an **experimental** local-first Kotlin Multiplatform / Compose messenger prototype. It has persistent on-device Ed25519 identities, contacts, a responsive chat UI, and **direct online text delivery on the same private IPv4 LAN**. Both devices must be online with the app open, have each other's public keys saved, and know each other's current LAN IP address. It is **not ready for sensitive communications**; the custom transport protocol has not been independently audited.
+Кроссплатформенный **экспериментальный** мессенджер без номера телефона: Compose Multiplatform, тёмная редакционная тема «Atelier» (чернильный графит и матовая латунь), нижняя панель на Android и боковая панель на компьютере. Исходники Android, Windows, Linux и macOS собираются через GitHub Actions. iOS-клиента пока нет.
 
-## Try two devices
+## Что работает
 
-1. Install on Android/Windows/Linux. Desktop users choose a passphrase of at least 12 characters; Android uses its Keystore.
-2. On each device open **Identity**, copy/select the Base64 URL public key. Compare the entire key through an independent trusted channel (short fingerprints are for visual orientation only).
-3. Open **Contacts** on each device and add the other's public key and the private IPv4 address shown under "Your LAN address" on the other's device. Use the same Wi-Fi/LAN; allow TCP port **45717** through your firewall and disable Wi-Fi client isolation. Internet routing is not implemented.
-4. Open **Chats**, select the contact and send a short text. A send is shown only after receiving an acknowledgement that the peer accepted and saved it. There is no offline queue, retry, sync or delivery after both apps close.
+- Постоянный локальный профиль Ed25519: приватный seed генерируется **libsodium** на устройстве; публичный ключ — ID. Android хранит зашифрованные данные под AES-GCM ключом Android Keystore, компьютер — под ключом из пароля (PBKDF2-HMAC-SHA256, 310 000 итераций). Seed и сообщения никогда не отправляются в открытом виде.
+- Контакты по публичному ключу и QR; сканирование камерой Android. Сверяйте **полный ключ** лично или по независимому доверенному каналу, прежде чем переписываться. На ПК ключ вводится вручную; сканера веб-камеры пока нет.
+- Прямые текстовые сообщения между двумя онлайн-устройствами в **одной частной IPv4-сети**, без сервера. У каждого собеседника должен быть ключ и актуальный IP другого. Порт TCP 45717 должен быть доступен, изоляция клиентов Wi-Fi отключена.
+- На каждое соединение создаётся новая пара X25519 (libsodium); эфемерный публичный ключ подписан Ed25519 и проверяется по закреплённому контакту. Сеансовый ключ выводится HKDF-SHA256 из X25519 секрета и транскрипта рукопожатия. Текст шифруется libsodium XChaCha20-Poly1305, привязан к рукопожатию через AAD. Сообщение показывается отправителю после подтверждения получателем сохранения в зашифрованное хранилище.
+- Таймер сообщений: без удаления, 1 час, 1 день или 7 дней. Таймер передаётся в зашифрованном сообщении и удаляет запись из **локального** хранилища при запуске или примерно через 15 секунд после истечения, пока приложение работает. Получатель может сделать копию; стирание из резервных копий/снимков файловой системы невозможно гарантировать.
+- На Android запрещены системные скриншоты/запись экрана через `FLAG_SECURE`. Число одновременных входящих соединений ограничено 8; длина текста — 16 КБ; история — 1 000 сообщений. Тесты проверяют хранилище, подпись, AEAD, обработку порчи данных, рукопожатие и таймер.
 
-## Structure / build
+## Установка / разработка
 
-- `composeApp/src/commonMain`: responsive UI, encrypted local contacts/message model, vault/transport contracts.
-- `composeApp/src/androidMain`: Android entry point, Android Keystore AES-256-GCM vault, Ed25519 and experimental LAN TCP transport.
-- `composeApp/src/desktopMain`: JVM desktop entry point, passphrase-derived AES-256-GCM vault, Ed25519 and experimental LAN TCP transport.
-- `.github/workflows/build.yml`: CI builds Android **debug APK**, Windows EXE and Linux DEB. Artifacts expire after 14 days.
+Для сборки нужны JDK 21 и Android SDK: `./gradlew :composeApp:assembleDebug` (APK **для отладки**, не релиз) или `./gradlew :composeApp:packageDistributionForCurrentOS` (EXE/DEB/DMG). Linux CI также запускает `./gradlew :composeApp:desktopTest`. Артефакты CI доступны 14 дней. DMG не подписан Apple Developer ID и может блокироваться Gatekeeper. Пароль компьютерного хранилища (от 12 символов) **не восстанавливается**. Android backup отключён.
 
-Requires JDK 17 + Android SDK for Android builds. `./gradlew :composeApp:assembleDebug` or `./gradlew :composeApp:packageDistributionForCurrentOS` (Windows/Linux).
+Структура: `composeApp/src/commonMain` — Compose UI, модель, контракты; `androidMain` — Keystore, камера и libsodium Android; `desktopMain` — хранилище с паролем и libsodium JVM; `desktopTest` — тесты. CI: `.github/workflows/build.yml`.
 
-## Threat model and limits
+## Границы приватности — прочитать перед использованием
 
-The experimental LAN handshake signs a fresh X25519 ephemeral public key with the local Ed25519 key, checks the peer against a pinned contact key, derives a session key using HKDF-SHA256 and encrypts one message with AES-256-GCM per connection. The protocol exposes both peers' IP addresses and traffic metadata. It has **no audited ratchet**, no forward secrecy guarantee after message receipt on a compromised device, no verification UX beyond manual key comparison, no groups, no anti-spam, no peer discovery, no offline delivery, and no key transparency. Do not treat this as a reviewed end-to-end encryption protocol. The APK is debug-signed. A firewall or router may prevent LAN connections.
+Протокол LAN **не проходил независимый криптоаудит** и не является Signal Protocol. Нет double-ratchet, защиты от компрометации уже открытого устройства, скрытия метаданных/IP, доказуемого удаления медиа или контроля скриншотов на других ОС. Приложение не следует использовать для чувствительной переписки. Партнёр по переписке видит ваш IP; провайдеры/администратор сети видят факт соединения. На устройстве могут остаться копии данных в памяти, журналах ОС или снимках ФС.
 
-The local vault uses Android Keystore AES-GCM (hardware-backed only if supported by the device) or desktop PBKDF2-HMAC-SHA256 (310,000 iterations) + AES-GCM. Desktop passwords cannot be recovered. Android backup is disabled. A reset changes the identity and erases local contacts/messages. Crypto primitives come from Bouncy Castle / Java, **not libsodium**. **SQLCipher**, QR scanning, Bluetooth/Wi-Fi Direct mesh and multihop, Tor, Nearby Connections, Multipeer Connectivity, WebRTC, voice/video, stickers, SOS, iOS and macOS packaging are not implemented. These need platform-specific work and independent security review before any privacy claims.
-
-## QR contact enrollment and macOS
-
-Identity screen displays a QR code containing **only** the public key. Android's Contacts screen can scan it with its camera; the other peer must still be verified in person and their current LAN IP entered manually. Desktop users can paste the public key; webcam capture is not implemented. Compose Desktop's macOS DMG is built on the macOS GitHub Actions runner; this is a JVM desktop build, **not an iOS app**.
-
-LAN reception limits concurrent inbound sockets to eight, reads at most 16 KiB of message plaintext per connection, and keeps at most 1,000 messages in the encrypted local vault. This is a bounded prototype, not a production denial-of-service defense.
+**Не реализованы:** iOS, удалённый Интернет через Tor, Nearby Connections/Multipeer Connectivity и multihop mesh, WebRTC-звонки, голосовые/видеосообщения и Opus/H.264, SQLCipher (хранилище — зашифрованный файл, не SQLCipher), стикеры и SOS-режим. Ни одно из этих свойств не имитируется интерфейсом. Для выпуска приватного мессенджера нужны реализация этих платформенных частей, проверка угроз, аудит кода и тестирование на реальных устройствах. Не отправляйте никакие GitHub-токены в чат.

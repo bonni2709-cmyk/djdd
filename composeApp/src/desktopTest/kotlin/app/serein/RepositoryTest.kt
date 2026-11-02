@@ -37,6 +37,9 @@ class RepositoryTest {
             assertEquals(own.publicKey, identityFromSeed(decodeBase64Url(reopened.data.seed)).publicKey)
             assertEquals("Hello", reopened.data.messages.single().text)
             assertEquals(contact, reopened.data.contacts.single())
+            reopened.save(reopened.data.copy(messages = reopened.data.messages +
+                ChatMessage(contact.publicKey, "expired", false, 1, 2)))
+            assertEquals(listOf("Hello"), LocalRepository(SecureVault(passphrase)).data.messages.map { it.text })
             assertFails { LocalRepository(SecureVault("another long passphrase")) }
             val file = Files.readAllBytes(tempHome.resolve(".serein/vault-v1"))
             assertFalse(file.toString(Charsets.UTF_8).contains("Hello"))

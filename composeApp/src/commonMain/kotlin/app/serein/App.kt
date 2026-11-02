@@ -16,17 +16,23 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 
-private val canvas = Color(0xFFF5F3EE)
-private val textColor = Color(0xFF1E2926)
-private val secondary = Color(0xFF6F7B74)
-private val sage = Color(0xFF405F54)
-private val border = Color(0xFFE2E5DF)
+// Atelier: ink, smoked olive and matte brass. No neon or electric blue.
+private val canvas = Color(0xFF111916)
+private val textColor = Color(0xFFF1EFE7)
+private val secondary = Color(0xFFA5B3AC)
+private val sage = Color(0xFFD7B886)
+private val border = Color(0xFF34423A)
+private val card = Color(0xFF1C2722)
+private val elevated = Color(0xFF26342C)
+private val onAccent = Color(0xFF211E18)
 
 @Composable
 fun SereinApp() {
@@ -47,12 +53,14 @@ fun SereinApp() {
             current = repo.data
             passphrase = ""
             error = null
-        } catch (_: Exception) { error = "Unable to open vault. Check the passphrase or vault data." }
+        } catch (_: Exception) { error = "Не удалось открыть хранилище. Проверьте пароль или данные." }
     }
     LaunchedEffect(Unit) { if (!isDesktop) unlock() }
 
-    val theme = lightColorScheme(primary = sage, onPrimary = Color.White, background = canvas,
-        surface = Color.White, onBackground = textColor, onSurface = textColor)
+    val theme = darkColorScheme(primary = sage, onPrimary = onAccent, background = canvas,
+        surface = card, onBackground = textColor, onSurface = textColor,
+        surfaceVariant = elevated, onSurfaceVariant = secondary, outline = border,
+        error = Color(0xFFEBAFA0))
     MaterialTheme(colorScheme = theme) {
         Surface(color = canvas) {
             if (repository == null || current == null) {
@@ -69,18 +77,19 @@ fun SereinApp() {
                         withRepositoryLock(repo) { keys = repo.data.contacts.map { it.publicKey }.toSet() }
                         keys
                     },
-                        { key, message ->
+                        { key, message, expiresAt ->
                             var saved = false
                             withRepositoryLock(repo) {
                                 try {
+                                    require(repo.data.contacts.any { it.publicKey == key })
                                     val updated = repo.data.copy(messages = (repo.data.messages +
-                                        ChatMessage(key, message, false, nowMillis())).takeLast(1000))
+                                        ChatMessage(key, message, false, nowMillis(), expiresAt)).takeLast(1000))
                                     repo.save(updated)
                                     saved = true
                                 } catch (_: Exception) { saved = false }
                             }
                             if (saved) scope.launch { current = repo.data }
-                            else scope.launch { lanError = "Could not save received message." }
+                            else scope.launch { lanError = "Полученное сообщение не удалось сохранить." }
                             saved
                         })
                 }
@@ -88,16 +97,26 @@ fun SereinApp() {
                     lanError = transport.start()
                     onDispose { transport.stop() }
                 }
-                fun send(contact: Contact, message: String) {
-                    transport.send(contact, message) { failure -> scope.launch {
+                LaunchedEffect(repo) {
+                    while (true) {
+                        delay(15_000)
+                        withRepositoryLock(repo) {
+                            val valid = repo.data.messages.filter { it.expiresAtMillis == null || it.expiresAtMillis > nowMillis() }
+                            if (valid.size != repo.data.messages.size) repo.save(repo.data.copy(messages = valid))
+                        }
+                        if (current !== repo.data) current = repo.data
+                    }
+                }
+                fun send(contact: Contact, message: String, expiresAt: Long?) {
+                    transport.send(contact, message, expiresAt) { failure -> scope.launch {
                         if (failure != null) lanError = failure
                         else try {
                             withRepositoryLock(repo) {
                                 repo.save(repo.data.copy(messages = (repo.data.messages +
-                                    ChatMessage(contact.publicKey, message, true, nowMillis())).takeLast(1000)))
+                                    ChatMessage(contact.publicKey, message, true, nowMillis(), expiresAt)).takeLast(1000)))
                             }
                             current = repo.data; lanError = null
-                        } catch (_: Exception) { lanError = "Peer acknowledged, but local save failed." }
+                        } catch (_: Exception) { lanError = "Собеседник принял сообщение, но сохранить его здесь не удалось." }
                     } }
                 }
                 fun update(newData: VaultData) {
@@ -110,7 +129,7 @@ fun SereinApp() {
                         }
                         current = repo.data; error = null
                     }
-                    catch (_: Exception) { error = "Changes could not be saved." }
+                    catch (_: Exception) { error = "Изменения не удалось сохранить." }
                 }
                 BoxWithConstraints(Modifier.fillMaxSize()) {
                     val wide = maxWidth >= 760.dp
@@ -128,10 +147,10 @@ fun SereinApp() {
                                 Workspace(page, data, identity, selected, { selected = it }, ::update,
                                     error ?: lanError, ::send, Modifier.fillMaxWidth())
                             }
-                            NavigationBar(containerColor = Color.White) {
-                                listOf("Chats", "Contacts", "Identity").forEachIndexed { index, label ->
+                            NavigationBar(containerColor = card) {
+                                listOf("Чаты", "Контакты", "Профиль").forEachIndexed { index, label ->
                                     NavigationBarItem(selected = page == index, onClick = { page = index; selected = null },
-                                        icon = { Text(listOf("◌", "⊕", "◇")[index], fontSize = 22.sp) },
+                                        icon = { Text(listOf("◈", "⊕", "◇")[index], fontSize = 22.sp) },
                                         label = { Text(label) })
                                 }
                             }
@@ -149,21 +168,22 @@ private fun UnlockScreen(desktop: Boolean, passphrase: String, onChange: (String
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(28.dp),
         verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
         Column(Modifier.widthIn(max = 420.dp)) {
-            Text("serein", fontSize = 36.sp, fontWeight = FontWeight.SemiBold)
-            Text("PRIVATE BY DESIGN", letterSpacing = 2.sp, fontSize = 10.sp, color = secondary)
+            Text("SEREIN", fontSize = 40.sp, fontFamily = FontFamily.Serif,
+                fontWeight = FontWeight.Light, letterSpacing = 4.sp)
+            Text("ЛИЧНОЕ ПРОСТРАНСТВО", letterSpacing = 2.sp, fontSize = 10.sp, color = sage)
             Spacer(Modifier.height(64.dp))
-            Text(if (desktop) "Unlock your space" else "Opening vault", fontSize = 30.sp, fontWeight = FontWeight.Medium)
+            Text(if (desktop) "Откройте своё пространство" else "Открываем хранилище", fontSize = 30.sp, fontWeight = FontWeight.Medium)
             Spacer(Modifier.height(12.dp))
-            Text(if (desktop) "Enter a passphrase (12+ characters). On first use, this creates an encrypted identity on this computer. Never lose your passphrase."
-                else "Your identity is encrypted using Android Keystore.", color = secondary)
+            Text(if (desktop) "Придумайте пароль от 12 символов. При первом запуске он создаст зашифрованный профиль. Восстановить забытый пароль нельзя."
+                else "Ваш профиль защищён Android Keystore.", color = secondary)
             if (desktop) {
                 Spacer(Modifier.height(26.dp))
-                OutlinedTextField(value = passphrase, onValueChange = onChange, label = { Text("Passphrase") },
+                OutlinedTextField(value = passphrase, onValueChange = onChange, label = { Text("Пароль") },
                     visualTransformation = PasswordVisualTransformation(), singleLine = true,
                     modifier = Modifier.fillMaxWidth())
                 Spacer(Modifier.height(16.dp))
                 Button(onClick = unlock, enabled = passphrase.length >= 12, modifier = Modifier.fillMaxWidth()) {
-                    Text("Open Serein")
+                    Text("Открыть Serein")
                 }
             }
             if (error != null) { Spacer(Modifier.height(16.dp)); Text(error, color = MaterialTheme.colorScheme.error) }
@@ -173,48 +193,51 @@ private fun UnlockScreen(desktop: Boolean, passphrase: String, onChange: (String
 
 @Composable
 private fun Sidebar(page: Int, select: (Int) -> Unit) {
-    Column(Modifier.width(236.dp).fillMaxHeight().background(Color.White).padding(24.dp)) {
-        Text("serein", fontSize = 29.sp, fontWeight = FontWeight.SemiBold)
-        Text("PRIVATE BY DESIGN", letterSpacing = 2.sp, fontSize = 10.sp, color = secondary)
+    Column(Modifier.width(250.dp).fillMaxHeight().background(card).padding(26.dp)) {
+        Text("SEREIN", fontSize = 28.sp, fontFamily = FontFamily.Serif,
+            fontWeight = FontWeight.Light, letterSpacing = 4.sp)
+        Text("ЛИЧНОЕ ПРОСТРАНСТВО", letterSpacing = 2.sp, fontSize = 10.sp, color = sage)
         Spacer(Modifier.height(68.dp))
-        listOf("Chats", "Contacts", "Identity").forEachIndexed { index, title ->
+        listOf("Чаты", "Контакты", "Профиль").forEachIndexed { index, title ->
             val active = page == index
             TextButton(onClick = { select(index) }, modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.textButtonColors(contentColor = if (active) sage else secondary)) {
-                Text(listOf("◌", "⊕", "◇")[index]); Spacer(Modifier.width(16.dp))
+                Text(listOf("◈", "⊕", "◇")[index]); Spacer(Modifier.width(16.dp))
                 Text(title, modifier = Modifier.weight(1f), fontSize = 16.sp,
                     fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal)
             }
             Spacer(Modifier.height(10.dp))
         }
         Spacer(Modifier.weight(1f))
-        Text("LOCAL-ONLY  ·  0.2", color = secondary, fontSize = 10.sp)
+        HorizontalDivider(color = border)
+        Spacer(Modifier.height(16.dp))
+        Text("ПРЯМАЯ СВЯЗЬ  ·  0.4", color = secondary, fontSize = 10.sp, letterSpacing = 1.sp)
     }
 }
 
 @Composable
 private fun Workspace(page: Int, data: VaultData, identity: Identity, selected: String?,
                       select: (String?) -> Unit, update: (VaultData) -> Unit, error: String?,
-                      send: (Contact, String) -> Unit, modifier: Modifier) {
+                      send: (Contact, String, Long?) -> Unit, modifier: Modifier) {
     Column(modifier.fillMaxHeight().padding(horizontal = 24.dp, vertical = 22.dp)) {
         Spacer(Modifier.height(16.dp))
         if (page == 0) {
-            Heading("Conversations", "Direct connection on the same private LAN")
+            Heading("Переписки", "Прямая связь в одной локальной сети")
             Spacer(Modifier.height(20.dp))
             if (selected == null) {
-                Notice("LAN-only beta", "Peers must be online on the same private network, with each other’s verified public keys and IP addresses. No offline delivery, Tor or security audit.")
+                Notice("Локальная сеть · бета", "Оба устройства должны быть онлайн в одной частной сети. Сверьте публичные ключи и укажите IP. Офлайн-доставки и Tor пока нет.")
                 Spacer(Modifier.height(22.dp))
-                if (data.contacts.isEmpty()) EmptyState("No conversations yet", "Add a contact to start a LAN chat.")
+                if (data.contacts.isEmpty()) EmptyState("Пока нет переписок", "Добавьте контакт, чтобы начать диалог.")
                 else LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     items(data.contacts, key = { it.publicKey }) { contact ->
                         val latest = data.messages.lastOrNull { it.contactKey == contact.publicKey }?.text
-                        ContactRow(contact, latest ?: "No messages", { select(contact.publicKey) })
+                        ContactRow(contact, latest ?: "Сообщений пока нет", { select(contact.publicKey) })
                     }
                 }
             } else {
                 val contact = data.contacts.find { it.publicKey == selected }
                 if (contact == null) select(null) else ChatScreen(contact,
-                    data.messages.filter { it.contactKey == selected }, { send(contact, it) }, { select(null) })
+                    data.messages.filter { it.contactKey == selected }, { text, expiry -> send(contact, text, expiry) }, { select(null) })
             }
         } else if (page == 1) {
             ContactsScreen(data, update)
@@ -227,17 +250,19 @@ private fun Workspace(page: Int, data: VaultData, identity: Identity, selected: 
 
 @Composable
 private fun Heading(title: String, caption: String) {
-    Text(title, fontSize = 30.sp, fontWeight = FontWeight.Medium)
+    Text(title, fontSize = 35.sp, fontFamily = FontFamily.Serif,
+        fontWeight = FontWeight.Normal, lineHeight = 40.sp)
     Spacer(Modifier.height(5.dp))
     Text(caption, color = secondary, fontSize = 14.sp)
 }
 
 @Composable
 private fun Notice(title: String, detail: String) {
-    Surface(shape = RoundedCornerShape(16.dp), color = Color(0xFFE9EFE9), modifier = Modifier.fillMaxWidth()) {
+    Surface(shape = RoundedCornerShape(16.dp), color = elevated,
+        border = BorderStroke(1.dp, border), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(18.dp)) {
-            Text(title, color = sage, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(4.dp)); Text(detail, color = sage, fontSize = 13.sp, lineHeight = 19.sp)
+            Text(title, color = sage, fontWeight = FontWeight.Medium, letterSpacing = 0.3.sp)
+            Spacer(Modifier.height(4.dp)); Text(detail, color = secondary, fontSize = 13.sp, lineHeight = 20.sp)
         }
     }
 }
@@ -245,7 +270,7 @@ private fun Notice(title: String, detail: String) {
 @Composable
 private fun EmptyState(title: String, detail: String) {
     Column(Modifier.fillMaxWidth().padding(vertical = 54.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("◇", fontSize = 36.sp, color = sage)
+        Text("◈", fontSize = 42.sp, color = sage)
         Spacer(Modifier.height(12.dp))
         Text(title, fontSize = 18.sp, fontWeight = FontWeight.Medium)
         Spacer(Modifier.height(6.dp)); Text(detail, color = secondary, fontSize = 13.sp)
@@ -254,10 +279,11 @@ private fun EmptyState(title: String, detail: String) {
 
 @Composable
 private fun ContactRow(contact: Contact, detail: String, open: () -> Unit) {
-    Surface(onClick = open, shape = RoundedCornerShape(16.dp), color = Color.White,
+    Surface(onClick = open, shape = RoundedCornerShape(16.dp), color = card,
+        border = BorderStroke(1.dp, border),
         modifier = Modifier.fillMaxWidth()) {
         Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(42.dp).background(Color(0xFFE5EDE7), CircleShape), contentAlignment = Alignment.Center) {
+            Box(Modifier.size(42.dp).background(elevated, CircleShape), contentAlignment = Alignment.Center) {
                 Text(contact.nickname.take(1).uppercase(), color = sage, fontWeight = FontWeight.Bold)
             }
             Spacer(Modifier.width(14.dp))
@@ -271,34 +297,59 @@ private fun ContactRow(contact: Contact, detail: String, open: () -> Unit) {
 }
 
 @Composable
-private fun ColumnScope.ChatScreen(contact: Contact, messages: List<ChatMessage>, send: (String) -> Unit, back: () -> Unit) {
+private fun ColumnScope.ChatScreen(contact: Contact, messages: List<ChatMessage>, send: (String, Long?) -> Unit, back: () -> Unit) {
     var draft by remember(contact.publicKey) { mutableStateOf("") }
+    var expiration by remember(contact.publicKey) { mutableStateOf(0L) }
+    var expirationMenu by remember { mutableStateOf(false) }
     LaunchedEffect(messages.lastOrNull()) {
         if (messages.lastOrNull()?.outgoing == true && messages.lastOrNull()?.text == draft) draft = ""
     }
-    TextButton(onClick = back) { Text("‹  Conversations") }
+    TextButton(onClick = back) { Text("‹  Переписки") }
     Spacer(Modifier.height(14.dp))
     Text(contact.nickname, fontSize = 24.sp, fontWeight = FontWeight.Medium)
-    Text("DIRECT LAN  ·  ${contact.host.ifBlank { "IP NOT SET" }}:$LAN_PORT", color = secondary, letterSpacing = 1.sp, fontSize = 10.sp)
+    Text("ЛОКАЛЬНАЯ СЕТЬ  ·  ${contact.host.ifBlank { "IP НЕ ЗАДАН" }}:$LAN_PORT", color = secondary, letterSpacing = 1.sp, fontSize = 10.sp)
     Spacer(Modifier.height(16.dp))
     LazyColumn(Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         items(messages) { message ->
             Row(Modifier.fillMaxWidth(), horizontalArrangement = if (message.outgoing) Arrangement.End else Arrangement.Start) {
-                Surface(shape = RoundedCornerShape(16.dp), color = if (message.outgoing) sage else Color.White) {
-                    Text(message.text, Modifier.widthIn(max = 300.dp).padding(14.dp),
-                        color = if (message.outgoing) Color.White else textColor)
+                Surface(shape = RoundedCornerShape(16.dp), color = if (message.outgoing) sage else card) {
+                    Column(Modifier.widthIn(max = 300.dp).padding(14.dp)) {
+                        Text(message.text, color = if (message.outgoing) onAccent else textColor)
+                        if (message.expiresAtMillis != null) {
+                            Spacer(Modifier.height(5.dp))
+                            Text("◷  Исчезающее", fontSize = 10.sp,
+                                color = if (message.outgoing) onAccent else secondary)
+                        }
+                    }
                 }
             }
         }
     }
     Spacer(Modifier.height(12.dp))
-    OutlinedTextField(draft, { draft = it }, label = { Text("Message") },
+    OutlinedTextField(draft, { draft = it }, label = { Text("Сообщение") },
         minLines = 1, maxLines = 4, modifier = Modifier.fillMaxWidth())
     Spacer(Modifier.height(12.dp))
-    Button(onClick = { if (draft.isNotBlank()) send(draft) },
-        enabled = draft.isNotBlank() && draft.encodeToByteArray().size <= 16_384) { Text("Send over LAN") }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box {
+            TextButton(onClick = { expirationMenu = true }) {
+                Text(if (expiration == 0L) "◷  Без таймера" else when (expiration) {
+                    3_600_000L -> "◷  1 час"; 86_400_000L -> "◷  1 день"; else -> "◷  7 дней"
+                })
+            }
+            DropdownMenu(expanded = expirationMenu, onDismissRequest = { expirationMenu = false }) {
+                listOf(0L to "Без таймера", 3_600_000L to "1 час", 86_400_000L to "1 день",
+                    7L * 86_400_000 to "7 дней").forEach { (millis, label) ->
+                    DropdownMenuItem(text = { Text(label) }, onClick = { expiration = millis; expirationMenu = false })
+                }
+            }
+        }
+        Spacer(Modifier.weight(1f))
+        Button(onClick = { if (draft.isNotBlank()) send(draft, if (expiration == 0L) null else nowMillis() + expiration) },
+            enabled = draft.isNotBlank() && draft.encodeToByteArray().size <= 16_384) { Text("Отправить") }
+    }
     Spacer(Modifier.height(14.dp))
-    Text("Sends only while both apps are open. Your peer can see your IP. No offline queue or end-to-end security audit.", color = secondary, fontSize = 12.sp)
+    Text("Удаление по таймеру — только на устройствах. Собеседник может сохранить копию. Протокол не прошёл независимый аудит.",
+        color = secondary, fontSize = 12.sp)
 }
 
 @Composable
@@ -310,45 +361,45 @@ private fun ContactsScreen(data: VaultData, update: (VaultData) -> Unit) {
     var qrScanResult by remember { mutableStateOf<String?>(null) }
     var host by remember { mutableStateOf("") }
     var contactError by remember { mutableStateOf<String?>(null) }
-    Heading("Contacts", "People you choose to remember")
+    Heading("Контакты", "Только те, кому вы доверяете")
     Spacer(Modifier.height(24.dp))
-    Notice("Your LAN address · port $LAN_PORT", localLanAddress())
+    Notice("Ваш адрес в сети · порт $LAN_PORT", localLanAddress())
     Spacer(Modifier.height(16.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        Button(onClick = { nickname = ""; key = ""; host = ""; editing = null; adding = true }) { Text("Add contact") }
+        Button(onClick = { nickname = ""; key = ""; host = ""; editing = null; adding = true }) { Text("Добавить") }
         if (!isDesktopPlatform()) OutlinedButton(onClick = {
             scanContactQr { result ->
                 if (result != null) {
                     val parsed = parseContactQr(result)
                     if (parsed != null) {
                         key = parsed; nickname = ""; host = ""; editing = null; adding = true
-                    } else qrScanResult = "Invalid Serein QR code"
+                    } else qrScanResult = "Неверный QR-код Serein"
                 }
             }
-        }) { Text("Scan QR") }
+        }) { Text("Сканировать QR") }
     }
     if (qrScanResult != null) Text(qrScanResult!!, color = MaterialTheme.colorScheme.error)
     Spacer(Modifier.height(20.dp))
-    Notice("Verify in person", "Both peers must add each other’s public keys and private LAN IP addresses. Compare keys over an independent trusted channel.")
+    Notice("Сверьте ключи лично", "Оба собеседника добавляют ключ и IP друг друга. Публичный ключ нужно сверить по независимому доверенному каналу.")
     Spacer(Modifier.height(18.dp))
     LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         items(data.contacts, key = { it.publicKey }) { contact ->
-            ContactRow(contact, "${contact.host.ifBlank { "IP not set" }} · ${contact.publicKey.take(12)}…", {
+            ContactRow(contact, "${contact.host.ifBlank { "IP не указан" }} · ${contact.publicKey.take(12)}…", {
                 editing = contact.publicKey; nickname = contact.nickname; key = contact.publicKey
                 host = contact.host; contactError = null; adding = true
             })
         }
     }
     if (adding) AlertDialog(onDismissRequest = { adding = false },
-        title = { Text(if (editing == null) "Add a contact" else "Edit contact") },
+        title = { Text(if (editing == null) "Новый контакт" else "Изменить контакт") },
         text = {
             Column {
-                OutlinedTextField(nickname, { nickname = it }, label = { Text("Name") }, singleLine = true)
+                OutlinedTextField(nickname, { nickname = it }, label = { Text("Имя") }, singleLine = true)
                 Spacer(Modifier.height(10.dp))
-                OutlinedTextField(key, { key = it.trim() }, label = { Text("Ed25519 public key · Base64 URL") },
+                OutlinedTextField(key, { key = it.trim() }, label = { Text("Публичный ключ Ed25519 · Base64 URL") },
                     minLines = 2, maxLines = 3)
                 Spacer(Modifier.height(10.dp))
-                OutlinedTextField(host, { host = it.trim() }, label = { Text("Private IPv4 address") },
+                OutlinedTextField(host, { host = it.trim() }, label = { Text("Частный IPv4-адрес") },
                     singleLine = true)
                 if (contactError != null) Text(contactError!!, color = MaterialTheme.colorScheme.error)
             }
@@ -356,10 +407,10 @@ private fun ContactsScreen(data: VaultData, update: (VaultData) -> Unit) {
         confirmButton = { TextButton(onClick = {
             val valid = try { decodeBase64Url(key).size == 32 } catch (_: Exception) { false }
             contactError = when {
-                nickname.trim().isEmpty() -> "Enter a name"
-                !valid -> "Enter a valid 32-byte Ed25519 public key"
-                data.contacts.any { it.publicKey == key && it.publicKey != editing } -> "Contact already exists"
-                host.isNotEmpty() && !host.matches(Regex("[0-9.]+")) -> "Use a numeric IPv4 address"
+                nickname.trim().isEmpty() -> "Введите имя"
+                !valid -> "Введите корректный публичный ключ Ed25519"
+                data.contacts.any { it.publicKey == key && it.publicKey != editing } -> "Контакт уже добавлен"
+                host.isNotEmpty() && !host.matches(Regex("[0-9.]+")) -> "Укажите IPv4-адрес цифрами"
                 else -> null
             }
             if (contactError == null) {
@@ -367,14 +418,14 @@ private fun ContactsScreen(data: VaultData, update: (VaultData) -> Unit) {
                     Contact(key, nickname.trim(), host)))
                 nickname = ""; key = ""; host = ""; adding = false
             }
-        }) { Text(if (editing == null) "Add" else "Save") } }, dismissButton = {
+        }) { Text(if (editing == null) "Добавить" else "Сохранить") } }, dismissButton = {
             Row {
                 if (editing != null) TextButton(onClick = {
                     update(data.copy(contacts = data.contacts.filterNot { it.publicKey == editing },
                         messages = data.messages.filterNot { it.contactKey == editing }))
                     adding = false; editing = null
-                }) { Text("Remove") }
-                TextButton(onClick = { adding = false }) { Text("Cancel") }
+                }) { Text("Удалить") }
+                TextButton(onClick = { adding = false }) { Text("Отмена") }
             }
         })
 }
@@ -383,17 +434,18 @@ private fun ContactsScreen(data: VaultData, update: (VaultData) -> Unit) {
 private fun IdentityScreen(data: VaultData, identity: Identity, update: (VaultData) -> Unit) {
     var confirm by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-    Heading("Your identity", "A persistent key, created on this device")
+    Heading("Ваш профиль", "Ключ создан и хранится на этом устройстве")
     Spacer(Modifier.height(26.dp))
-    Surface(shape = RoundedCornerShape(20.dp), color = Color.White, modifier = Modifier.fillMaxWidth()) {
+    Surface(shape = RoundedCornerShape(20.dp), color = card,
+        border = BorderStroke(1.dp, border), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(24.dp)) {
-            Text("ED25519  /  PUBLIC KEY", color = sage, fontSize = 11.sp, letterSpacing = 1.4.sp)
+            Text("ED25519  /  ПУБЛИЧНЫЙ КЛЮЧ", color = sage, fontSize = 11.sp, letterSpacing = 1.4.sp)
             Spacer(Modifier.height(28.dp))
-            Text("Fingerprint", color = secondary, fontSize = 13.sp)
+            Text("Отпечаток", color = secondary, fontSize = 13.sp)
             Spacer(Modifier.height(6.dp))
             Text(identity.fingerprint.chunked(4).joinToString("  "), fontSize = 25.sp, fontWeight = FontWeight.Medium)
             Spacer(Modifier.height(25.dp)); HorizontalDivider(color = border); Spacer(Modifier.height(18.dp))
-            Text("Public key · Base64 URL", color = secondary, fontSize = 13.sp)
+            Text("Публичный ключ · Base64 URL", color = secondary, fontSize = 13.sp)
             Spacer(Modifier.height(8.dp))
             androidx.compose.foundation.text.selection.SelectionContainer {
                 Text(identity.publicKey, fontSize = 15.sp, lineHeight = 23.sp)
@@ -403,18 +455,18 @@ private fun IdentityScreen(data: VaultData, identity: Identity, update: (VaultDa
         }
     }
     Spacer(Modifier.height(20.dp))
-    Notice("Encrypted on this device", "Android uses Keystore; desktop uses a passphrase-derived key. LAN messages use signed ephemeral X25519 and AES-GCM, but the protocol is experimental and unaudited. There is no account recovery.")
+    Notice("Зашифровано на устройстве", "Android использует Keystore, компьютер — ключ из пароля. Сообщения используют libsodium и XChaCha20-Poly1305. Протокол экспериментальный, независимого аудита нет.")
     Spacer(Modifier.height(18.dp))
-    OutlinedButton(onClick = { confirm = true }) { Text("Reset identity and local data") }
+    OutlinedButton(onClick = { confirm = true }) { Text("Удалить профиль и данные") }
     if (confirm) AlertDialog(onDismissRequest = { confirm = false },
-        title = { Text("Reset everything?") },
-        text = { Text("This removes contacts and LAN messages and creates a new identity. The old key cannot be recovered.") },
+        title = { Text("Удалить всё?") },
+        text = { Text("Контакты и сообщения будут удалены, появится новый ключ. Старый восстановить нельзя.") },
         confirmButton = { TextButton(onClick = {
             val replacement = generateIdentity()
             try { update(VaultData(seed = replacement.secretSeed.toBase64Url())) }
             finally { replacement.clear(); confirm = false }
-        }) { Text("Reset") } },
-        dismissButton = { TextButton(onClick = { confirm = false }) { Text("Cancel") } })
+        }) { Text("Удалить") } },
+        dismissButton = { TextButton(onClick = { confirm = false }) { Text("Отмена") } })
     }
 }
 
@@ -426,9 +478,9 @@ private fun ContactQr(publicKey: String) {
     Canvas(Modifier.size(194.dp).background(Color.White)) {
         val unit = size.minDimension / grid.size
         for (y in 0 until grid.size) for (x in 0 until grid.size) {
-            if (grid.dark(x, y)) drawRect(textColor, Offset(x * unit, y * unit), Size(unit, unit))
+            if (grid.dark(x, y)) drawRect(Color(0xFF111916), Offset(x * unit, y * unit), Size(unit, unit))
         }
     }
     Spacer(Modifier.height(8.dp))
-    Text("Scan to add this public key. Verify it in person.", color = secondary, fontSize = 12.sp)
+    Text("Покажите код собеседнику. Обязательно сверьте ключ лично.", color = secondary, fontSize = 12.sp)
 }

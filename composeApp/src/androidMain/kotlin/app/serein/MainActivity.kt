@@ -1,6 +1,8 @@
 package app.serein
 
 import android.os.Bundle
+import android.graphics.Color
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import com.journeyapps.barcodescanner.ScanContract
@@ -22,6 +24,12 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         appContext = applicationContext
+        // Block system screenshots, screen recording and recent-app previews on Android.
+        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        window.statusBarColor = Color.rgb(17, 25, 22)
+        window.navigationBarColor = Color.rgb(17, 25, 22)
+        @Suppress("DEPRECATION")
+        window.decorView.systemUiVisibility = 0
         activeActivity = this
         setContent { SereinApp() }
     }
