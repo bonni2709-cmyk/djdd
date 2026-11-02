@@ -1,0 +1,68 @@
+name: Build Veil APK and Windows EXE
+
+on:
+  push:
+    branches:
+      - main
+      - 'arena/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GRADLE_OPTS: -Dorg.gradle.daemon=false
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: Android APK
+            runner: ubuntu-latest
+            gradleTask: :composeApp:assembleDebug
+            artifactPath: composeApp/build/outputs/apk/debug/*.apk
+            artifactName: veil-android-apk
+          - target: Windows EXE
+            runner: windows-latest
+            gradleTask: :composeApp:packageReleaseExe
+            artifactPath: composeApp/build/compose/binaries/main-release/exe/*.exe
+            artifactName: veil-windows-exe
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle 8.11.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: Install WiX Toolset (Windows package prerequisite)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install wixtoolset --no-progress -y
+
+      - name: Build APK
+        if: matrix.target == 'Android APK'
+        run: gradle ${{ matrix.gradleTask }} --no-daemon
+
+      - name: Build Windows installer EXE
+        if: matrix.target == 'Windows EXE'
+        run: gradle ${{ matrix.gradleTask }} --no-daemon
+
+      - name: Upload ${{ matrix.target }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifactName }}
+          path: ${{ matrix.artifactPath }}
+          if-no-files-found: error
+          retention-days: 30
