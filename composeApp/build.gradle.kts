@@ -74,7 +74,8 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Exe, TargetFormat.Deb, TargetFormat.Dmg)
             packageName = "serein"
-            packageVersion = "0.3.0"
+            // macOS installers require a major version >= 1; the app itself remains a 0.3 prototype.
+            packageVersion = "1.0.0"
             description = "Serein local-first prototype"
             vendor = "Serein"
         }
