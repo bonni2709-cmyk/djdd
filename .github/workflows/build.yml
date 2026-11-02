@@ -43,7 +43,7 @@ jobs:
           ./gradlew ${{ matrix.task }} --stacktrace > build.log 2>&1
           result=$?
           if [ "$result" -ne 0 ]; then
-            awk '/^FAILURE: Build failed/{flag=1} flag && n++<9 {print}' build.log | while IFS= read -r line; do
+            (grep -E '^e:|^error:|\.kt:[0-9]+:[0-9]+:.*error' build.log | head -n 9; awk '/^FAILURE: Build failed/{flag=1} flag && n++<5 {print}' build.log) | while IFS= read -r line; do
               echo "::error::${line}"
             done
           fi
