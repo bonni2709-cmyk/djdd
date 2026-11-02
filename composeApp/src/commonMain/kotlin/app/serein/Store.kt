@@ -66,3 +66,5 @@ expect fun nowMillis(): Long
 expect fun withRepositoryLock(repository: LocalRepository, block: () -> Unit)
 
 expect fun localLanAddress(): String
+
+expect fun hasStoredVault(): Boolean

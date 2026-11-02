@@ -71,3 +71,6 @@ actual class SecureVault actual constructor(private val passphrase: String) {
 
     actual fun erase() { Files.deleteIfExists(path) }
 }
+
+actual fun hasStoredVault(): Boolean = Files.exists(
+    Path.of(System.getProperty("user.home"), ".serein", "vault-v1"))

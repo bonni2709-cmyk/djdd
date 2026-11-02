@@ -37,6 +37,7 @@ private val onAccent = Color(0xFF211E18)
 @Composable
 fun SereinApp() {
     var passphrase by remember { mutableStateOf("") }
+    var confirmation by remember { mutableStateOf("") }
     var repository by remember { mutableStateOf<LocalRepository?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var page by remember { mutableIntStateOf(0) }
@@ -45,13 +46,19 @@ fun SereinApp() {
     var lanError by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val isDesktop = isDesktopPlatform()
+    val firstDesktopLaunch = remember { isDesktop && !hasStoredVault() }
 
     fun unlock() {
         try {
+            if (firstDesktopLaunch && passphrase != confirmation) {
+                error = "Пароли не совпадают"
+                return
+            }
             val repo = LocalRepository(SecureVault(passphrase))
             repository = repo
             current = repo.data
             passphrase = ""
+            confirmation = ""
             error = null
         } catch (_: Exception) { error = "Не удалось открыть хранилище. Проверьте пароль или данные." }
     }
@@ -64,7 +71,8 @@ fun SereinApp() {
     MaterialTheme(colorScheme = theme) {
         Surface(color = canvas) {
             if (repository == null || current == null) {
-                UnlockScreen(isDesktop, passphrase, { passphrase = it }, error, ::unlock)
+                UnlockScreen(isDesktop, firstDesktopLaunch, passphrase, { passphrase = it },
+                    confirmation, { confirmation = it }, error, ::unlock)
             } else {
                 val repo = repository!!
                 val data = current!!
@@ -163,7 +171,9 @@ fun SereinApp() {
 }
 
 @Composable
-private fun UnlockScreen(desktop: Boolean, passphrase: String, onChange: (String) -> Unit,
+private fun UnlockScreen(desktop: Boolean, firstLaunch: Boolean,
+                         passphrase: String, onChange: (String) -> Unit,
+                         confirmation: String, onConfirm: (String) -> Unit,
                          error: String?, unlock: () -> Unit) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(28.dp),
         verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
@@ -172,18 +182,31 @@ private fun UnlockScreen(desktop: Boolean, passphrase: String, onChange: (String
                 fontWeight = FontWeight.Light, letterSpacing = 4.sp)
             Text("ЛИЧНОЕ ПРОСТРАНСТВО", letterSpacing = 2.sp, fontSize = 10.sp, color = sage)
             Spacer(Modifier.height(64.dp))
-            Text(if (desktop) "Откройте своё пространство" else "Открываем хранилище", fontSize = 30.sp, fontWeight = FontWeight.Medium)
+            Text(if (desktop) (if (firstLaunch) "Создайте профиль" else "С возвращением")
+                else "Открываем хранилище", fontSize = 30.sp, fontFamily = FontFamily.Serif)
             Spacer(Modifier.height(12.dp))
-            Text(if (desktop) "Придумайте пароль от 12 символов. При первом запуске он создаст зашифрованный профиль. Восстановить забытый пароль нельзя."
+            Text(if (desktop) (if (firstLaunch) "Придумайте пароль от 12 символов и повторите его. Без пароля восстановить профиль будет невозможно."
+                else "Введите пароль от вашего зашифрованного профиля.")
                 else "Ваш профиль защищён Android Keystore.", color = secondary)
             if (desktop) {
                 Spacer(Modifier.height(26.dp))
                 OutlinedTextField(value = passphrase, onValueChange = onChange, label = { Text("Пароль") },
                     visualTransformation = PasswordVisualTransformation(), singleLine = true,
                     modifier = Modifier.fillMaxWidth())
+                if (firstLaunch) {
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(value = confirmation, onValueChange = onConfirm,
+                        label = { Text("Повторите пароль") },
+                        visualTransformation = PasswordVisualTransformation(), singleLine = true,
+                        modifier = Modifier.fillMaxWidth())
+                    if (confirmation.isNotEmpty() && confirmation != passphrase) {
+                        Text("Пароли не совпадают", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                    }
+                }
                 Spacer(Modifier.height(16.dp))
-                Button(onClick = unlock, enabled = passphrase.length >= 12, modifier = Modifier.fillMaxWidth()) {
-                    Text("Открыть Serein")
+                Button(onClick = unlock, enabled = passphrase.length >= 12 &&
+                    (!firstLaunch || passphrase == confirmation), modifier = Modifier.fillMaxWidth()) {
+                    Text(if (firstLaunch) "Создать зашифрованный профиль" else "Открыть Serein")
                 }
             }
             if (error != null) { Spacer(Modifier.height(16.dp)); Text(error, color = MaterialTheme.colorScheme.error) }

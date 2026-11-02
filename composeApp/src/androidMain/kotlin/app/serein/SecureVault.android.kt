@@ -57,3 +57,5 @@ actual class SecureVault actual constructor(passphrase: String) {
         store.deleteEntry(alias)
     }
 }
+
+actual fun hasStoredVault(): Boolean = appContext.getFileStreamPath("serein-vault-v1").exists()
