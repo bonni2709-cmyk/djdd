@@ -31,6 +31,9 @@ kotlin {
             implementation("androidx.activity:activity-compose:1.10.1")
             implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
         }
+        val desktopTest by getting {
+            dependencies { implementation(kotlin("test")) }
+        }
         val desktopMain by getting {
             dependencies {
                 implementation(compose.desktop.currentOs)
