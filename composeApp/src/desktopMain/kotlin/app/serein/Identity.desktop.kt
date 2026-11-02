@@ -27,3 +27,15 @@ actual fun identityFromSeed(seed: ByteArray): Identity {
 }
 
 actual fun isDesktopPlatform(): Boolean = true
+
+actual fun nowMillis(): Long = System.currentTimeMillis()
+
+actual fun withRepositoryLock(repository: LocalRepository, block: () -> Unit) { synchronized(repository) { block() } }
+
+actual fun localLanAddress(): String = try {
+    java.net.NetworkInterface.getNetworkInterfaces().toList()
+        .flatMap { it.inetAddresses.toList() }
+        .filterIsInstance<java.net.Inet4Address>()
+        .firstOrNull { it.isSiteLocalAddress && !it.isLoopbackAddress }
+        ?.hostAddress ?: "Not connected to a private LAN"
+} catch (_: Exception) { "Unavailable" }

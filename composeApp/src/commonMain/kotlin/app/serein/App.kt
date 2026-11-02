@@ -17,6 +17,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 
 private val canvas = Color(0xFFF5F3EE)
 private val textColor = Color(0xFF1E2926)
@@ -32,6 +33,8 @@ fun SereinApp() {
     var page by remember { mutableIntStateOf(0) }
     var selected by remember { mutableStateOf<String?>(null) }
     var current by remember { mutableStateOf<VaultData?>(null) }
+    var lanError by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
     val isDesktop = isDesktopPlatform()
 
     fun unlock() {
@@ -57,8 +60,49 @@ fun SereinApp() {
                 val seed = remember(data.seed) { decodeBase64Url(data.seed) }
                 val identity = remember(data.seed) { identityFromSeed(seed) }
                 DisposableEffect(identity) { onDispose { seed.fill(0); identity.clear() } }
+                val transport = remember(repo, identity) {
+                    LanTransport(identity, { repo.data.contacts.map { it.publicKey }.toSet() },
+                        { key, message ->
+                            var saved = false
+                            withRepositoryLock(repo) {
+                                try {
+                                    val updated = repo.data.copy(messages = repo.data.messages +
+                                        ChatMessage(key, message, false, nowMillis()))
+                                    repo.save(updated)
+                                    saved = true
+                                } catch (_: Exception) { saved = false }
+                            }
+                            if (saved) scope.launch { current = repo.data }
+                            else scope.launch { lanError = "Could not save received message." }
+                            saved
+                        }
+                }
+                DisposableEffect(transport) {
+                    lanError = transport.start()
+                    onDispose { transport.stop() }
+                }
+                fun send(contact: Contact, message: String) {
+                    transport.send(contact, message) { failure -> scope.launch {
+                        if (failure != null) lanError = failure
+                        else try {
+                            withRepositoryLock(repo) {
+                                repo.save(repo.data.copy(messages = repo.data.messages +
+                                    ChatMessage(contact.publicKey, message, true, nowMillis())))
+                            }
+                            current = repo.data; lanError = null
+                        } catch (_: Exception) { lanError = "Peer acknowledged, but local save failed." }
+                    } }
+                }
                 fun update(newData: VaultData) {
-                    try { repo.save(newData); current = newData; error = null }
+                    try {
+                        withRepositoryLock(repo) {
+                            repo.save(if (newData.seed == repo.data.seed)
+                                newData.copy(messages = repo.data.messages.filter { message ->
+                                    newData.contacts.any { it.publicKey == message.contactKey }
+                                }) else newData)
+                        }
+                        current = repo.data; error = null
+                    }
                     catch (_: Exception) { error = "Changes could not be saved." }
                 }
                 BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -68,14 +112,14 @@ fun SereinApp() {
                             Sidebar(page, { page = it; selected = null })
                             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
                                 Workspace(page, data, identity, selected, { selected = it }, ::update,
-                                    error, Modifier.widthIn(max = 820.dp))
+                                    error ?: lanError, ::send, Modifier.widthIn(max = 820.dp))
                             }
                         }
                     } else {
                         Column(Modifier.fillMaxSize()) {
                             Box(Modifier.weight(1f).fillMaxWidth()) {
                                 Workspace(page, data, identity, selected, { selected = it }, ::update,
-                                    error, Modifier.fillMaxWidth())
+                                    error ?: lanError, ::send, Modifier.fillMaxWidth())
                             }
                             NavigationBar(containerColor = Color.White) {
                                 listOf("Chats", "Contacts", "Identity").forEachIndexed { index, label ->
@@ -143,28 +187,27 @@ private fun Sidebar(page: Int, select: (Int) -> Unit) {
 
 @Composable
 private fun Workspace(page: Int, data: VaultData, identity: Identity, selected: String?,
-                      select: (String?) -> Unit, update: (VaultData) -> Unit, error: String?, modifier: Modifier) {
+                      select: (String?) -> Unit, update: (VaultData) -> Unit, error: String?,
+                      send: (Contact, String) -> Unit, modifier: Modifier) {
     Column(modifier.fillMaxHeight().padding(horizontal = 24.dp, vertical = 22.dp)) {
         Spacer(Modifier.height(16.dp))
         if (page == 0) {
-            Heading("Conversations", "Private space for your contacts")
+            Heading("Conversations", "Direct connection on the same private LAN")
             Spacer(Modifier.height(20.dp))
             if (selected == null) {
-                Notice("Local drafts only", "Messages saved here are NOT sent to other devices. Network delivery is not available yet.")
+                Notice("LAN-only beta", "Peers must be online on the same private network, with each other’s verified public keys and IP addresses. No offline delivery, Tor or security audit.")
                 Spacer(Modifier.height(22.dp))
-                if (data.contacts.isEmpty()) EmptyState("No conversations yet", "Add a contact to write a local draft.")
+                if (data.contacts.isEmpty()) EmptyState("No conversations yet", "Add a contact to start a LAN chat.")
                 else LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     items(data.contacts, key = { it.publicKey }) { contact ->
-                        val draft = data.drafts.find { it.contactKey == contact.publicKey }?.text
-                        ContactRow(contact, draft ?: "No draft", { select(contact.publicKey) })
+                        val latest = data.messages.lastOrNull { it.contactKey == contact.publicKey }?.text
+                        ContactRow(contact, latest ?: "No messages", { select(contact.publicKey) })
                     }
                 }
             } else {
                 val contact = data.contacts.find { it.publicKey == selected }
-                if (contact == null) select(null) else DraftScreen(contact,
-                    data.drafts.find { it.contactKey == selected }?.text.orEmpty(),
-                    { value -> update(data.copy(drafts = data.drafts.filterNot { it.contactKey == selected } + Draft(selected, value))) },
-                    { select(null) })
+                if (contact == null) select(null) else ChatScreen(contact,
+                    data.messages.filter { it.contactKey == selected }, { send(contact, it) }, { select(null) })
             }
         } else if (page == 1) {
             ContactsScreen(data, update)
@@ -221,46 +264,71 @@ private fun ContactRow(contact: Contact, detail: String, open: () -> Unit) {
 }
 
 @Composable
-private fun DraftScreen(contact: Contact, initial: String, save: (String) -> Unit, back: () -> Unit) {
-    var draft by remember(contact.publicKey) { mutableStateOf(initial) }
+private fun ChatScreen(contact: Contact, messages: List<ChatMessage>, send: (String) -> Unit, back: () -> Unit) {
+    var draft by remember(contact.publicKey) { mutableStateOf("") }
+    LaunchedEffect(messages.lastOrNull()) {
+        if (messages.lastOrNull()?.outgoing == true && messages.lastOrNull()?.text == draft) draft = ""
+    }
     TextButton(onClick = back) { Text("‹  Conversations") }
     Spacer(Modifier.height(14.dp))
     Text(contact.nickname, fontSize = 24.sp, fontWeight = FontWeight.Medium)
-    Text("LOCAL DRAFT · NOT DELIVERED", color = secondary, letterSpacing = 1.sp, fontSize = 10.sp)
-    Spacer(Modifier.height(24.dp))
-    OutlinedTextField(draft, { draft = it }, label = { Text("Write a private draft") },
-        minLines = 4, maxLines = 10, modifier = Modifier.fillMaxWidth())
+    Text("DIRECT LAN  ·  ${contact.host.ifBlank { "IP NOT SET" }}:$LAN_PORT", color = secondary, letterSpacing = 1.sp, fontSize = 10.sp)
+    Spacer(Modifier.height(16.dp))
+    LazyColumn(Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        items(messages) { message ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = if (message.outgoing) Arrangement.End else Arrangement.Start) {
+                Surface(shape = RoundedCornerShape(16.dp), color = if (message.outgoing) sage else Color.White) {
+                    Text(message.text, Modifier.widthIn(max = 300.dp).padding(14.dp),
+                        color = if (message.outgoing) Color.White else textColor)
+                }
+            }
+        }
+    }
     Spacer(Modifier.height(12.dp))
-    Button(onClick = { save(draft) }) { Text("Save on this device") }
+    OutlinedTextField(draft, { draft = it }, label = { Text("Message") },
+        minLines = 1, maxLines = 4, modifier = Modifier.fillMaxWidth())
+    Spacer(Modifier.height(12.dp))
+    Button(onClick = { if (draft.isNotBlank()) send(draft) },
+        enabled = draft.isNotBlank() && draft.encodeToByteArray().size <= 16_384) { Text("Send over LAN") }
     Spacer(Modifier.height(14.dp))
-    Text("This is not a chat. The draft is encrypted at rest and visible only here.", color = secondary, fontSize = 12.sp)
+    Text("Sends only while both apps are open. Your peer can see your IP. No offline queue or end-to-end security audit.", color = secondary, fontSize = 12.sp)
 }
 
 @Composable
 private fun ContactsScreen(data: VaultData, update: (VaultData) -> Unit) {
     var adding by remember { mutableStateOf(false) }
+    var editing by remember { mutableStateOf<String?>(null) }
     var nickname by remember { mutableStateOf("") }
     var key by remember { mutableStateOf("") }
+    var host by remember { mutableStateOf("") }
     var contactError by remember { mutableStateOf<String?>(null) }
     Heading("Contacts", "People you choose to remember")
     Spacer(Modifier.height(24.dp))
-    Button(onClick = { adding = true }) { Text("Add by public key") }
+    Notice("Your LAN address · port $LAN_PORT", localLanAddress())
+    Spacer(Modifier.height(16.dp))
+    Button(onClick = { nickname = ""; key = ""; host = ""; editing = null; adding = true }) { Text("Add contact") }
     Spacer(Modifier.height(20.dp))
-    Notice("Verify in person", "A public key pasted from an untrusted source does not prove a person's identity. Compare fingerprints over a trusted channel.")
+    Notice("Verify in person", "Both peers must add each other’s public keys and private LAN IP addresses. Compare keys over an independent trusted channel.")
     Spacer(Modifier.height(18.dp))
     LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         items(data.contacts, key = { it.publicKey }) { contact ->
-            ContactRow(contact, contact.publicKey.take(14) + "…", { adding = false })
+            ContactRow(contact, "${contact.host.ifBlank { "IP not set" }} · ${contact.publicKey.take(12)}…", {
+                editing = contact.publicKey; nickname = contact.nickname; key = contact.publicKey
+                host = contact.host; contactError = null; adding = true
+            })
         }
     }
     if (adding) AlertDialog(onDismissRequest = { adding = false },
-        title = { Text("Add a contact") },
+        title = { Text(if (editing == null) "Add a contact" else "Edit contact") },
         text = {
             Column {
                 OutlinedTextField(nickname, { nickname = it }, label = { Text("Name") }, singleLine = true)
                 Spacer(Modifier.height(10.dp))
                 OutlinedTextField(key, { key = it.trim() }, label = { Text("Ed25519 public key · Base64 URL") },
                     minLines = 2, maxLines = 3)
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(host, { host = it.trim() }, label = { Text("Private IPv4 address") },
+                    singleLine = true)
                 if (contactError != null) Text(contactError!!, color = MaterialTheme.colorScheme.error)
             }
         },
@@ -269,14 +337,25 @@ private fun ContactsScreen(data: VaultData, update: (VaultData) -> Unit) {
             contactError = when {
                 nickname.trim().isEmpty() -> "Enter a name"
                 !valid -> "Enter a valid 32-byte Ed25519 public key"
-                data.contacts.any { it.publicKey == key } -> "Contact already exists"
+                data.contacts.any { it.publicKey == key && it.publicKey != editing } -> "Contact already exists"
+                host.isNotEmpty() && !host.matches(Regex("[0-9.]+")) -> "Use a numeric IPv4 address"
                 else -> null
             }
             if (contactError == null) {
-                update(data.copy(contacts = data.contacts + Contact(key, nickname.trim())))
-                nickname = ""; key = ""; adding = false
+                update(data.copy(contacts = data.contacts.filterNot { it.publicKey == editing } +
+                    Contact(key, nickname.trim(), host)))
+                nickname = ""; key = ""; host = ""; adding = false
             }
-        }) { Text("Add") } }, dismissButton = { TextButton(onClick = { adding = false }) { Text("Cancel") } })
+        }) { Text(if (editing == null) "Add" else "Save") } }, dismissButton = {
+            Row {
+                if (editing != null) TextButton(onClick = {
+                    update(data.copy(contacts = data.contacts.filterNot { it.publicKey == editing },
+                        messages = data.messages.filterNot { it.contactKey == editing }))
+                    adding = false; editing = null
+                }) { Text("Remove") }
+                TextButton(onClick = { adding = false }) { Text("Cancel") }
+            }
+        })
 }
 
 @Composable
@@ -294,16 +373,18 @@ private fun IdentityScreen(data: VaultData, identity: Identity, update: (VaultDa
             Spacer(Modifier.height(25.dp)); HorizontalDivider(color = border); Spacer(Modifier.height(18.dp))
             Text("Public key · Base64 URL", color = secondary, fontSize = 13.sp)
             Spacer(Modifier.height(8.dp))
-            Text(identity.publicKey, fontSize = 15.sp, lineHeight = 23.sp)
+            androidx.compose.foundation.text.selection.SelectionContainer {
+                Text(identity.publicKey, fontSize = 15.sp, lineHeight = 23.sp)
+            }
         }
     }
     Spacer(Modifier.height(20.dp))
-    Notice("Encrypted on this device", "Android uses Keystore; desktop uses a passphrase-derived key. There is no account recovery. No security audit has been performed.")
+    Notice("Encrypted on this device", "Android uses Keystore; desktop uses a passphrase-derived key. LAN messages use signed ephemeral X25519 and AES-GCM, but the protocol is experimental and unaudited. There is no account recovery.")
     Spacer(Modifier.height(18.dp))
     OutlinedButton(onClick = { confirm = true }) { Text("Reset identity and local data") }
     if (confirm) AlertDialog(onDismissRequest = { confirm = false },
         title = { Text("Reset everything?") },
-        text = { Text("This removes contacts and local drafts and creates a new identity. The old key cannot be recovered.") },
+        text = { Text("This removes contacts and LAN messages and creates a new identity. The old key cannot be recovered.") },
         confirmButton = { TextButton(onClick = {
             val replacement = generateIdentity()
             try { update(VaultData(seed = replacement.secretSeed.toBase64Url())) }

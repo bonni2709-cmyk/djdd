@@ -47,8 +47,8 @@ android {
         applicationId = "app.serein"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 3
+        versionName = "0.3.0"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -68,7 +68,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Exe, TargetFormat.Deb)
             packageName = "serein"
-            packageVersion = "0.2.0"
+            packageVersion = "0.3.0"
             description = "Serein local-first prototype"
             vendor = "Serein"
         }

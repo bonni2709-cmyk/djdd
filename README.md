@@ -1,18 +1,25 @@
 # Serein
 
-Serein is a Kotlin Multiplatform / Compose **local-first prototype**. It is not yet a messenger. The application now has a usable conversation-shaped UI, persistent on-device Ed25519 identity, manually added contacts and encrypted **local unsent drafts**. It does **not send messages** or connect to other devices; the drafts are deliberately labeled as such. No security audit has been performed.
+Serein is an **experimental** local-first Kotlin Multiplatform / Compose messenger prototype. It has persistent on-device Ed25519 identities, contacts, a responsive chat UI, and **direct online text delivery on the same private IPv4 LAN**. Both devices must be online with the app open, have each other's public keys saved, and know each other's current LAN IP address. It is **not ready for sensitive communications**; the custom transport protocol has not been independently audited.
 
-## Structure
+## Try two devices
 
-- `composeApp/src/commonMain`: Compose mobile/desktop UI, typed local contact/draft model, vault contract.
-- `composeApp/src/androidMain`: Android entry point, Android Keystore AES-256-GCM vault, Ed25519 generation.
-- `composeApp/src/desktopMain`: JVM desktop entry point, passphrase-derived AES-256-GCM vault, Ed25519 generation.
-- `.github/workflows/build.yml`: Android debug APK, Windows EXE, Linux DEB build matrix.
+1. Install on Android/Windows/Linux. Desktop users choose a passphrase of at least 12 characters; Android uses its Keystore.
+2. On each device open **Identity**, copy/select the Base64 URL public key. Compare the entire key through an independent trusted channel (short fingerprints are for visual orientation only).
+3. Open **Contacts** on each device and add the other's public key and the private IPv4 address shown under "Your LAN address" on the other's device. Use the same Wi-Fi/LAN; allow TCP port **45717** through your firewall and disable Wi-Fi client isolation. Internet routing is not implemented.
+4. Open **Chats**, select the contact and send a short text. A send is shown only after receiving an acknowledgement that the peer accepted and saved it. There is no offline queue, retry, sync or delivery after both apps close.
 
-## Run / build
+## Structure / build
 
-Requires JDK 17 and Android SDK to build Android. Use `./gradlew :composeApp:assembleDebug` for a **debug-signed** APK, or `./gradlew :composeApp:packageDistributionForCurrentOS` for a Windows/Linux desktop installer. The CI archives expire after 14 days. Windows/Linux users must choose a passphrase of at least 12 characters on first launch and enter it again on subsequent launches. **There is no recovery if it is lost.** Android stores its vault key in Android Keystore (hardware-backed only if the device provides that capability). Android backup is disabled. The app stores a public Ed25519 key, private seed, contact names/public keys, and unsent drafts in its encrypted vault. No data is sent over the network. Resetting your identity erases contacts and drafts. This is an early design; do not store sensitive data until it has been independently audited.
+- `composeApp/src/commonMain`: responsive UI, encrypted local contacts/message model, vault/transport contracts.
+- `composeApp/src/androidMain`: Android entry point, Android Keystore AES-256-GCM vault, Ed25519 and experimental LAN TCP transport.
+- `composeApp/src/desktopMain`: JVM desktop entry point, passphrase-derived AES-256-GCM vault, Ed25519 and experimental LAN TCP transport.
+- `.github/workflows/build.yml`: CI builds Android **debug APK**, Windows EXE and Linux DEB. Artifacts expire after 14 days.
 
-## Known limitations
+Requires JDK 17 + Android SDK for Android builds. `./gradlew :composeApp:assembleDebug` or `./gradlew :composeApp:packageDistributionForCurrentOS` (Windows/Linux).
 
-Ed25519 is generated with Bouncy Castle, **not libsodium**. The fingerprint shown is the first 6 bytes of SHA-256; compare public keys/fingerprints through a trusted independent channel. Password-based desktop encryption uses PBKDF2-HMAC-SHA256 (310,000 iterations) and AES-GCM; it has not been independently reviewed. No authenticated key exchange, libsodium XChaCha20-Poly1305, SQLCipher, QR enrollment, peer discovery, Internet/mesh delivery, Tor, Nearby Connections, Multipeer Connectivity, WebRTC, media, or SOS mode is implemented. macOS/iOS builds are not configured. Never treat drafts as delivered messages. A production decentralized messenger requires a reviewed protocol, transport integration, reliable delivery, safe key management, and cross-platform security testing.
+## Threat model and limits
+
+The experimental LAN handshake signs a fresh X25519 ephemeral public key with the local Ed25519 key, checks the peer against a pinned contact key, derives a session key using HKDF-SHA256 and encrypts one message with AES-256-GCM per connection. The protocol exposes both peers' IP addresses and traffic metadata. It has **no audited ratchet**, no forward secrecy guarantee after message receipt on a compromised device, no verification UX beyond manual key comparison, no groups, no anti-spam, no peer discovery, no offline delivery, and no key transparency. Do not treat this as a reviewed end-to-end encryption protocol. The APK is debug-signed. A firewall or router may prevent LAN connections.
+
+The local vault uses Android Keystore AES-GCM (hardware-backed only if supported by the device) or desktop PBKDF2-HMAC-SHA256 (310,000 iterations) + AES-GCM. Desktop passwords cannot be recovered. Android backup is disabled. A reset changes the identity and erases local contacts/messages. Crypto primitives come from Bouncy Castle / Java, **not libsodium**. **SQLCipher**, QR scanning, Bluetooth/Wi-Fi Direct mesh and multihop, Tor, Nearby Connections, Multipeer Connectivity, WebRTC, voice/video, stickers, SOS, iOS and macOS packaging are not implemented. These need platform-specific work and independent security review before any privacy claims.

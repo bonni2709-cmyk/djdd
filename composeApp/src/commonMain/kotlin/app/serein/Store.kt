@@ -10,11 +10,12 @@ data class VaultData(
     val version: Int = 1,
     val seed: String,
     val contacts: List<Contact> = emptyList(),
-    val drafts: List<Draft> = emptyList()
+    val drafts: List<Draft> = emptyList(),
+    val messages: List<ChatMessage> = emptyList()
 )
 
 @Serializable
-data class Contact(val publicKey: String, val nickname: String)
+data class Contact(val publicKey: String, val nickname: String, val host: String = "")
 
 /** Local-only unsent drafts, NOT delivered messages. */
 @Serializable
@@ -47,3 +48,12 @@ class LocalRepository(private val vault: SecureVault) {
 expect fun ByteArray.toBase64Url(): String
 expect fun decodeBase64Url(value: String): ByteArray
 expect fun identityFromSeed(seed: ByteArray): Identity
+
+@Serializable
+data class ChatMessage(val contactKey: String, val text: String, val outgoing: Boolean, val timeMillis: Long)
+
+expect fun nowMillis(): Long
+
+expect fun withRepositoryLock(repository: LocalRepository, block: () -> Unit)
+
+expect fun localLanAddress(): String
