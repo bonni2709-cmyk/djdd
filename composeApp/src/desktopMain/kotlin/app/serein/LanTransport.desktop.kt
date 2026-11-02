@@ -3,29 +3,18 @@ package app.serein
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.net.InetAddress
-import java.net.ServerSocket
 import java.net.InetSocketAddress
-import java.util.concurrent.Semaphore
+import java.net.ServerSocket
 import java.net.Socket
-import java.security.SecureRandom
 import java.security.MessageDigest
-import javax.crypto.Cipher
-import javax.crypto.spec.GCMParameterSpec
+import java.util.concurrent.Semaphore
+import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
-import org.bouncycastle.crypto.agreement.X25519Agreement
-import org.bouncycastle.crypto.digests.SHA256Digest
-import org.bouncycastle.crypto.generators.HKDFBytesGenerator
-import org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters
-import org.bouncycastle.crypto.params.Ed25519PublicKeyParameters
-import org.bouncycastle.crypto.params.HKDFParameters
-import org.bouncycastle.crypto.params.X25519PrivateKeyParameters
-import org.bouncycastle.crypto.params.X25519PublicKeyParameters
-import org.bouncycastle.crypto.signers.Ed25519Signer
 
 /**
- * Experimental direct-LAN, one message per TCP connection. Identity signs an ephemeral X25519
- * key for every connection. The receiving side must already have the sender's Ed25519 key pinned.
- * No offline queue, ratchet, replay database, or metadata privacy: NOT a production protocol.
+ * Experimental direct-LAN handshake: signed ephemeral X25519, HKDF-SHA256, XChaCha20-Poly1305.
+ * Each connection carries one message. Peer identity must be pinned out-of-band; no ratchet or
+ * metadata privacy. Native libsodium operations fail closed if the library is unavailable.
  */
 actual class LanTransport actual constructor(
     private val identity: Identity,
@@ -34,7 +23,8 @@ actual class LanTransport actual constructor(
 ) {
     private var server: ServerSocket? = null
     private val inboundSlots = Semaphore(8)
-    private val magic = "serein-lan-v1".toByteArray(Charsets.US_ASCII)
+    private val outboundSlots = Semaphore(4)
+    private val magic = "serein-lan-v2".toByteArray(Charsets.US_ASCII)
 
     actual fun start(): String? = try {
         server = ServerSocket().apply { reuseAddress = true; bind(InetSocketAddress(LAN_PORT)) }
@@ -58,39 +48,38 @@ actual class LanTransport actual constructor(
     actual fun stop() { server?.close(); server = null }
 
     actual fun send(contact: Contact, text: String, onResult: (String?) -> Unit) {
+        if (!outboundSlots.tryAcquire()) { onResult("Too many active connections."); return }
         Thread({
             val error = try {
-                require(contact.host.isNotBlank()) { "Set a peer LAN IP address in Contacts." }
-                require(text.isNotBlank() && text.encodeToByteArray().size <= 16_384) { "Message must be 1–16384 bytes." }
+                require(contact.host.matches(Regex("[0-9.]+"))) { "Enter a numeric private IPv4 address." }
                 val address = InetAddress.getByName(contact.host)
-                // Require a numeric IPv4 LAN address; never resolve untrusted hostnames.
-                require(contact.host.matches(Regex("[0-9.]+")) && address.isSiteLocalAddress) {
-                    "Use a private IPv4 LAN address (e.g. 192.168.1.20)."
-                }
+                require(address is java.net.Inet4Address && address.isSiteLocalAddress) { "Peer must be on a private IPv4 LAN." }
+                val plaintext = text.encodeToByteArray()
+                require(plaintext.isNotEmpty() && plaintext.size <= 16_384) { "Message must be 1–16384 bytes." }
                 Socket().use { socket ->
-                    socket.connect(java.net.InetSocketAddress(address, LAN_PORT), 5000)
+                    socket.connect(InetSocketAddress(address, LAN_PORT), 5000)
                     socket.soTimeout = 8000
                     val input = DataInputStream(socket.getInputStream())
                     val output = DataOutputStream(socket.getOutputStream())
-                    val ephemeral = X25519PrivateKeyParameters(SecureRandom())
-                    val localHello = hello(ephemeral)
-                    output.write(localHello); output.flush()
-                    val remoteHello = ByteArray(128).also { input.readFully(it) }
-                    val peerKey = verify(remoteHello)
-                    require(peerKey == contact.publicKey) { "Peer key does not match this contact." }
-                    val key = sessionKey(ephemeral, remoteHello, localHello, remoteHello)
-                    val nonce = ByteArray(12).also { SecureRandom().nextBytes(it) }
-                    val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-                    cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, nonce))
-                    cipher.updateAAD(localHello + remoteHello)
-                    val frame = nonce + cipher.doFinal(text.encodeToByteArray())
-                    key.fill(0)
-                    output.writeInt(frame.size); output.write(frame); output.flush()
-                    // Explicit acknowledgement: success means the receiving app persisted the frame.
-                    require(input.readUnsignedByte() == 1) { "Peer did not acknowledge message." }
+                    val (public, secret) = SodiumBridge.ephemeralKeypair()
+                    try {
+                        val localHello = hello(public)
+                        output.write(localHello); output.flush()
+                        val remoteHello = ByteArray(128).also { input.readFully(it) }
+                        val peerKey = verify(remoteHello)
+                        require(peerKey == contact.publicKey) { "Peer key does not match the pinned contact." }
+                        val key = sessionKey(secret, remoteHello, localHello, remoteHello)
+                        try {
+                            val nonce = SodiumBridge.nonce()
+                            val frame = nonce + SodiumBridge.seal(key, nonce, localHello + remoteHello, plaintext)
+                            output.writeInt(frame.size); output.write(frame); output.flush()
+                        } finally { key.fill(0) }
+                        require(input.readUnsignedByte() == 1) { "Peer did not acknowledge message." }
+                    } finally { secret.fill(0) }
                 }
                 null
             } catch (e: Exception) { e.message ?: "LAN connection failed." }
+            finally { outboundSlots.release() }
             onResult(error)
         }, "serein-send").apply { isDaemon = true; start() }
     }
@@ -103,57 +92,49 @@ actual class LanTransport actual constructor(
             val remoteHello = ByteArray(128).also { bytes -> input.readFully(bytes) }
             val peerKey = verify(remoteHello)
             require(peerKey in knownKeys()) { "Unknown peer" }
-            val ephemeral = X25519PrivateKeyParameters(SecureRandom())
-            val localHello = hello(ephemeral)
-            output.write(localHello); output.flush()
-            val key = sessionKey(ephemeral, remoteHello, remoteHello, localHello)
-            val size = input.readInt()
-            require(size in 29..16_412) { "Invalid frame size" }
-            val frame = ByteArray(size).also { bytes -> input.readFully(bytes) }
-            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-            cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"),
-                GCMParameterSpec(128, frame.copyOfRange(0, 12)))
-            cipher.updateAAD(remoteHello + localHello)
-            val message = cipher.doFinal(frame.copyOfRange(12, size)).decodeToString()
-            key.fill(0)
-            require(message.isNotBlank()) { "Empty message" }
-            require(onMessage(peerKey, message)) { "Message could not be saved" }
-            output.writeByte(1); output.flush()
+            val (public, secret) = SodiumBridge.ephemeralKeypair()
+            try {
+                val localHello = hello(public)
+                output.write(localHello); output.flush()
+                val key = sessionKey(secret, remoteHello, remoteHello, localHello)
+                try {
+                    val size = input.readInt()
+                    require(size in 41..16_424) { "Invalid frame size" }
+                    val frame = ByteArray(size).also { bytes -> input.readFully(bytes) }
+                    val message = SodiumBridge.open(key, frame.copyOfRange(0, 24),
+                        remoteHello + localHello, frame.copyOfRange(24, size)).decodeToString()
+                    require(message.isNotBlank()) { "Empty message" }
+                    require(onMessage(peerKey, message)) { "Message could not be saved" }
+                    output.writeByte(1); output.flush()
+                } finally { key.fill(0) }
+            } finally { secret.fill(0) }
         }
     }
 
-    private fun hello(ephemeral: X25519PrivateKeyParameters): ByteArray {
-        val public = ByteArray(32).also { ephemeral.generatePublicKey().encode(it, 0) }
-        val signer = Ed25519Signer()
-        signer.init(true, Ed25519PrivateKeyParameters(identity.secretSeed, 0))
-        signer.update(magic + public, 0, magic.size + public.size)
-        return decodeBase64Url(identity.publicKey) + public + signer.generateSignature()
+    private fun hello(ephemeralPublic: ByteArray): ByteArray {
+        val signature = SodiumBridge.sign(identity.secretSeed, magic + ephemeralPublic)
+        return decodeBase64Url(identity.publicKey) + ephemeralPublic + signature
     }
 
     private fun verify(hello: ByteArray): String {
         require(hello.size == 128)
-        val signer = Ed25519Signer()
-        signer.init(false, Ed25519PublicKeyParameters(hello, 0))
-        val signed = magic + hello.copyOfRange(32, 64)
-        signer.update(signed, 0, signed.size)
-        require(signer.verifySignature(hello.copyOfRange(64, 128))) { "Invalid peer signature" }
-        return hello.copyOfRange(0, 32).toBase64Url()
+        val public = hello.copyOfRange(0, 32)
+        require(SodiumBridge.verify(public, magic + hello.copyOfRange(32, 64),
+            hello.copyOfRange(64, 128))) { "Invalid peer signature" }
+        return public.toBase64Url()
     }
 
-    private fun sessionKey(ephemeral: X25519PrivateKeyParameters, peerHello: ByteArray,
+    private fun sessionKey(secret: ByteArray, peerHello: ByteArray,
                            clientHello: ByteArray, serverHello: ByteArray): ByteArray {
-        val agreement = X25519Agreement()
-        agreement.init(ephemeral)
-        val shared = ByteArray(32)
-        agreement.calculateAgreement(X25519PublicKeyParameters(peerHello, 32), shared, 0)
-        require(shared.any { it != 0.toByte() }) { "Invalid peer key" }
-        val transcript = MessageDigest.getInstance("SHA-256").digest(magic + clientHello + serverHello)
-        val key = ByteArray(32)
-        HKDFBytesGenerator(SHA256Digest()).apply {
-            init(HKDFParameters(shared, transcript, "serein-lan-v1 aes-gcm".toByteArray()))
-            generateBytes(key, 0, key.size)
-        }
-        shared.fill(0)
-        return key
+        val shared = SodiumBridge.sharedSecret(secret, peerHello.copyOfRange(32, 64))
+        try {
+            val salt = MessageDigest.getInstance("SHA-256").digest(magic + clientHello + serverHello)
+            val prk = hmac(salt, shared)
+            try { return hmac(prk, "serein-lan-v2 xchacha20poly1305".toByteArray() + byteArrayOf(1)) }
+            finally { prk.fill(0) }
+        } finally { shared.fill(0) }
     }
+
+    private fun hmac(key: ByteArray, message: ByteArray): ByteArray =
+        Mac.getInstance("HmacSHA256").apply { init(SecretKeySpec(key, "HmacSHA256")) }.doFinal(message)
 }

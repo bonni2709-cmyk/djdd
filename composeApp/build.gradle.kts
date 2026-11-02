@@ -29,7 +29,8 @@ kotlin {
         }
         androidMain.dependencies {
             implementation("androidx.activity:activity-compose:1.10.1")
-            implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
+            implementation("com.goterl:lazysodium-android:5.2.0")
+            implementation("net.java.dev.jna:jna:5.17.0@aar")
             implementation("com.google.zxing:core:3.5.3")
             implementation("com.journeyapps:zxing-android-embedded:4.3.0")
         }
@@ -39,7 +40,8 @@ kotlin {
         val desktopMain by getting {
             dependencies {
                 implementation(compose.desktop.currentOs)
-                implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
+                implementation("com.goterl:lazysodium-java:5.2.0")
+                implementation("net.java.dev.jna:jna:5.17.0")
                 implementation("com.google.zxing:core:3.5.3")
             }
         }
@@ -53,8 +55,8 @@ android {
         applicationId = "app.serein"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 4
+        versionName = "0.4.0"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -62,7 +64,6 @@ android {
     }
     packaging {
         resources {
-            // Both JSpecify and Bouncy Castle ship this OSGi metadata; it is not needed at runtime.
             excludes += "META-INF/versions/9/OSGI-INF/MANIFEST.MF"
         }
     }
@@ -74,7 +75,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Exe, TargetFormat.Deb, TargetFormat.Dmg)
             packageName = "serein"
-            // macOS installers require a major version >= 1; the app itself remains a 0.3 prototype.
+            // macOS installers require a major version >= 1; the app itself remains a 0.4 prototype.
             packageVersion = "1.0.0"
             description = "Serein local-first prototype"
             vendor = "Serein"
