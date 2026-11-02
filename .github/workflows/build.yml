@@ -41,8 +41,17 @@ jobs:
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v4
       - name: Desktop tests
-        if: matrix.platform == 'linux'
+        if: matrix.platform != 'android'
         run: ./gradlew :composeApp:desktopTest
+      - name: Android emulator smoke test
+        if: matrix.platform == 'android'
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          script: ./gradlew :composeApp:connectedDebugAndroidTest
       - name: Package
         shell: bash
         run: |

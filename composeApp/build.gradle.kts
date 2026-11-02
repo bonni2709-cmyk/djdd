@@ -27,6 +27,14 @@ kotlin {
             implementation(compose.ui)
             implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
         }
+        val androidInstrumentedTest by getting {
+            dependencies {
+                implementation(kotlin("test"))
+                implementation("androidx.test:runner:1.6.2")
+                implementation("androidx.test.ext:junit:1.2.1")
+                implementation("androidx.test:core:1.6.1")
+            }
+        }
         androidMain.dependencies {
             implementation("androidx.activity:activity-compose:1.10.1")
             implementation("com.goterl:lazysodium-android:5.2.0") {
@@ -60,6 +68,7 @@ android {
         targetSdk = 35
         versionCode = 4
         versionName = "0.4.0"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
