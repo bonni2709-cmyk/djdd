@@ -67,9 +67,11 @@ jobs:
         if: failure()
         shell: pwsh
         run: |
-          $tail = (Get-Content build.log -Tail 35) -join ' | '
-          $tail = $tail.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
-          Write-Output "::error title=Gradle build output::$tail"
+          $diagnostics = (Select-String -Path build.log -Pattern 'What went wrong:|Execution failed for task|A failure occurred|Duplicate|More than one file was found|files found with path|Could not resolve' | Select-Object -First 12 | ForEach-Object { $_.Line }) -join ' | '
+          $tail = (Get-Content build.log -Tail 20) -join ' | '
+          $message = "$diagnostics || $tail"
+          $message = $message.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+          Write-Output "::error title=Gradle build output::$message"
 
       - name: Upload build log on failure
         if: failure()

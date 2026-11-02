@@ -56,6 +56,21 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+
+    // Bouncy Castle is a multi-release JAR; these desktop-only metadata files
+    // must not be merged into the Android APK resources.
+    packaging {
+        resources {
+            excludes += setOf(
+                "META-INF/versions/**",
+                "META-INF/AL2.0",
+                "META-INF/LGPL2.1",
+                "META-INF/DEPENDENCIES",
+                "META-INF/NOTICE*",
+                "META-INF/LICENSE*"
+            )
+        }
+    }
 }
 
 compose.desktop {
