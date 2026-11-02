@@ -1,6 +1,10 @@
 package app.serein
 
 import java.nio.file.Files
+import com.google.zxing.BinaryBitmap
+import com.google.zxing.MultiFormatReader
+import com.google.zxing.RGBLuminanceSource
+import com.google.zxing.common.HybridBinarizer
 import javax.crypto.Cipher
 import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.GCMParameterSpec
@@ -19,7 +23,14 @@ class RepositoryTest {
         try {
             val grid = encodeContactQr(identity.publicKey)
             assertTrue(grid.size >= 21)
-            assertEquals(identity.publicKey, parseContactQr(CONTACT_SCHEME + identity.publicKey))
+            val width = grid.size * 5
+            val pixels = IntArray(width * width) { i ->
+                if (grid.dark((i % width) / 5, (i / width) / 5)) 0xFF000000.toInt() else 0xFFFFFFFF.toInt()
+            }
+            val result = MultiFormatReader().decode(BinaryBitmap(HybridBinarizer(
+                RGBLuminanceSource(width, width, pixels))))
+            assertEquals(CONTACT_SCHEME + identity.publicKey, result.text)
+            assertEquals(identity.publicKey, parseContactQr(result.text))
             assertEquals(null, parseContactQr(CONTACT_SCHEME + "garbage"))
         } finally { identity.clear() }
     }

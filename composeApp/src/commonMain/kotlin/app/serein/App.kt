@@ -367,9 +367,11 @@ private fun ContactsScreen(data: VaultData, update: (VaultData) -> Unit) {
     Spacer(Modifier.height(16.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         Button(onClick = { nickname = ""; key = ""; host = ""; editing = null; adding = true }) { Text("Добавить") }
-        if (!isDesktopPlatform()) OutlinedButton(onClick = {
+        OutlinedButton(onClick = {
+            qrScanResult = "Ожидание QR-кода с камеры…"
             scanContactQr { result ->
-                if (result != null) {
+                if (result == null) qrScanResult = "Камера недоступна или QR-код не найден"
+                else {
                     val parsed = parseContactQr(result)
                     if (parsed != null) {
                         key = parsed; nickname = ""; host = ""; editing = null; adding = true

@@ -54,6 +54,7 @@ kotlin {
                 implementation("com.goterl:lazysodium-java:5.2.0")
                 implementation("net.java.dev.jna:jna:5.17.0")
                 implementation("com.google.zxing:core:3.5.3")
+                implementation("com.github.sarxos:webcam-capture:0.3.12")
             }
         }
     }
@@ -91,6 +92,14 @@ compose.desktop {
             packageVersion = "1.0.0"
             description = "Serein local-first prototype"
             vendor = "Serein"
+            macOS {
+                infoPlist {
+                    extraKeysRawXml = """
+                        <key>NSCameraUsageDescription</key>
+                        <string>Камера используется только для локального сканирования QR-кода публичного ключа.</string>
+                    """.trimIndent()
+                }
+            }
         }
     }
 }
