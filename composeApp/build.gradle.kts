@@ -29,7 +29,10 @@ kotlin {
         }
         androidMain.dependencies {
             implementation("androidx.activity:activity-compose:1.10.1")
-            implementation("com.goterl:lazysodium-android:5.2.0")
+            implementation("com.goterl:lazysodium-android:5.2.0") {
+                // The AAR needs Android JNA, not the transitive desktop JAR of the same classes.
+                exclude(group = "net.java.dev.jna", module = "jna")
+            }
             implementation("net.java.dev.jna:jna:5.17.0@aar")
             implementation("com.google.zxing:core:3.5.3")
             implementation("com.journeyapps:zxing-android-embedded:4.3.0")
