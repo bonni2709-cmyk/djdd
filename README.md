@@ -1,18 +1,18 @@
 # Serein
 
-A **prototype**, not a secure messenger. Calm, light Compose Multiplatform UI with a sidebar on desktop and bottom navigation on Android. It generates an Ed25519 identity locally on launch and shows the public key and SHA-256 fingerprint. The private seed remains in process memory only and is lost on exit. There is no messaging or network transport yet.
+Serein is a Kotlin Multiplatform / Compose **local-first prototype**. It is not yet a messenger. The application now has a usable conversation-shaped UI, persistent on-device Ed25519 identity, manually added contacts and encrypted **local unsent drafts**. It does **not send messages** or connect to other devices; the drafts are deliberately labeled as such. No security audit has been performed.
 
-## Layout
+## Structure
 
-- `composeApp/src/commonMain`: shared Compose UI and identity contract.
-- `composeApp/src/androidMain`: Android entry point and Ed25519 implementation.
-- `composeApp/src/desktopMain`: JVM desktop entry point and Ed25519 implementation (Windows/Linux).
-- `.github/workflows/build.yml`: Android debug APK, Windows EXE, Linux DEB CI matrix.
+- `composeApp/src/commonMain`: Compose mobile/desktop UI, typed local contact/draft model, vault contract.
+- `composeApp/src/androidMain`: Android entry point, Android Keystore AES-256-GCM vault, Ed25519 generation.
+- `composeApp/src/desktopMain`: JVM desktop entry point, passphrase-derived AES-256-GCM vault, Ed25519 generation.
+- `.github/workflows/build.yml`: Android debug APK, Windows EXE, Linux DEB build matrix.
 
-## Build
+## Run / build
 
-Requires JDK 17 and an Android SDK for Android builds. `./gradlew :composeApp:assembleDebug` builds a **debug-signed, non-release** APK; `./gradlew :composeApp:packageDistributionForCurrentOS` builds the native desktop package on Windows or Linux. CI artifacts expire after 14 days. macOS and iOS are not configured.
+Requires JDK 17 and Android SDK to build Android. Use `./gradlew :composeApp:assembleDebug` for a **debug-signed** APK, or `./gradlew :composeApp:packageDistributionForCurrentOS` for a Windows/Linux desktop installer. The CI archives expire after 14 days. Windows/Linux users must choose a passphrase of at least 12 characters on first launch and enter it again on subsequent launches. **There is no recovery if it is lost.** Android stores its vault key in Android Keystore (hardware-backed only if the device provides that capability). Android backup is disabled. The app stores a public Ed25519 key, private seed, contact names/public keys, and unsent drafts in its encrypted vault. No data is sent over the network. Resetting your identity erases contacts and drafts. This is an early design; do not store sensitive data until it has been independently audited.
 
-## Security boundaries / roadmap
+## Known limitations
 
-Ed25519 is generated using Bouncy Castle, **not libsodium**. Fingerprint display is not contact verification. Key persistence, authenticated key exchange, ratcheting, XChaCha20-Poly1305, SQLCipher, QR enrollment, peer discovery, multihop routing, Tor, Nearby Connections, Multipeer Connectivity, WebRTC, media, and SOS are **not implemented**. These need protocol design, platform permissions, integration tests, and independent security review before any privacy claims or real-world use. Never publish an unverified public key as proof of identity; never use the prototype for sensitive communications.
+Ed25519 is generated with Bouncy Castle, **not libsodium**. The fingerprint shown is the first 6 bytes of SHA-256; compare public keys/fingerprints through a trusted independent channel. Password-based desktop encryption uses PBKDF2-HMAC-SHA256 (310,000 iterations) and AES-GCM; it has not been independently reviewed. No authenticated key exchange, libsodium XChaCha20-Poly1305, SQLCipher, QR enrollment, peer discovery, Internet/mesh delivery, Tor, Nearby Connections, Multipeer Connectivity, WebRTC, media, or SOS mode is implemented. macOS/iOS builds are not configured. Never treat drafts as delivered messages. A production decentralized messenger requires a reviewed protocol, transport integration, reliable delivery, safe key management, and cross-platform security testing.

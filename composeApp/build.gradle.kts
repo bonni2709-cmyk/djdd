@@ -4,6 +4,7 @@ plugins {
     kotlin("multiplatform")
     id("com.android.application")
     id("org.jetbrains.compose")
+    id("org.jetbrains.kotlin.plugin.serialization")
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
@@ -24,6 +25,7 @@ kotlin {
             implementation(compose.foundation)
             implementation(compose.material3)
             implementation(compose.ui)
+            implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
         }
         androidMain.dependencies {
             implementation("androidx.activity:activity-compose:1.10.1")
@@ -45,8 +47,8 @@ android {
         applicationId = "app.serein"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -66,8 +68,8 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Exe, TargetFormat.Deb)
             packageName = "serein"
-            packageVersion = "0.1.0"
-            description = "Serein identity prototype"
+            packageVersion = "0.2.0"
+            description = "Serein local-first prototype"
             vendor = "Serein"
         }
     }
